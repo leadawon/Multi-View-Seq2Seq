@@ -10,8 +10,8 @@ from . import FairseqLRScheduler, register_lr_scheduler
 class PolynomialDecaySchedule(FairseqLRScheduler):
     """Decay the LR on a fixed schedule."""
 
-    def __init__(self, args, optimizer, optimizer2 = None):
-        super().__init__(args, optimizer, optimizer2)
+    def __init__(self, args, optimizer):
+        super().__init__(args, optimizer)
 
         # set defaults
         args.warmup_updates = getattr(args, 'warmup_updates', 0) or 0
@@ -24,13 +24,7 @@ class PolynomialDecaySchedule(FairseqLRScheduler):
         self.end_learning_rate = args.end_learning_rate
         self.total_num_update = args.total_num_update
         self.power = args.power
-        
-        print("here schedule!")
-
         self.optimizer.set_lr(self.warmup_factor * self.lr)
-
-        if optimizer2 is not None:
-            self.optimizer2.set_lr(self.warmup_factor * self.lr * 10)
 
     @staticmethod
     def add_args(parser):
@@ -58,10 +52,6 @@ class PolynomialDecaySchedule(FairseqLRScheduler):
         super().step(epoch, val_loss)
         self.lr = self.get_next_lr(epoch)
         self.optimizer.set_lr(self.warmup_factor * self.lr)
-
-        if self.optimizer2 is not None:
-            self.optimizer2.set_lr(self.warmup_factor * self.lr * 10)
-
         return self.optimizer.get_lr()
 
     def step_update(self, num_updates):
@@ -77,8 +67,4 @@ class PolynomialDecaySchedule(FairseqLRScheduler):
             pct_remaining = 1 - (num_updates - warmup) / (self.total_num_update - warmup)
             lr = lr_range * pct_remaining ** (self.power) + self.end_learning_rate
         self.optimizer.set_lr(lr)
-
-        if self.optimizer2 is not None:
-            self.optimizer2.set_lr(self.warmup_factor * self.lr * 10)
-
         return self.optimizer.get_lr()

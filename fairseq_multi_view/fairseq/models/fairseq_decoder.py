@@ -3,8 +3,11 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+from typing import Dict, List, Optional, Tuple
+
 import torch.nn as nn
 from fairseq import utils
+from torch import Tensor
 
 
 class FairseqDecoder(nn.Module):
@@ -15,9 +18,7 @@ class FairseqDecoder(nn.Module):
         self.dictionary = dictionary
         self.onnx_trace = False
 
-        #print("Here!!!")
-
-    def forward(self, prev_output_tokens, encoder_out=None, encoder_out2 = None, **kwargs):
+    def forward(self, prev_output_tokens, encoder_out=None, **kwargs):
         """
         Args:
             prev_output_tokens (LongTensor): shifted output tokens of shape
@@ -54,7 +55,12 @@ class FairseqDecoder(nn.Module):
         """
         raise NotImplementedError
 
-    def get_normalized_probs(self, net_output, log_probs, sample):
+    def get_normalized_probs(
+        self,
+        net_output: Tuple[Tensor, Optional[Dict[str, List[Optional[Tensor]]]]],
+        log_probs: bool,
+        sample: Optional[Dict[str, Tensor]] = None,
+    ):
         """Get normalized probabilities (or log probs) from a net's output."""
 
         if hasattr(self, "adaptive_softmax") and self.adaptive_softmax is not None:
@@ -67,9 +73,6 @@ class FairseqDecoder(nn.Module):
             return out.exp_() if not log_probs else out
 
         logits = net_output[0]
-        
-        #print(logits)
-
         if log_probs:
             return utils.log_softmax(logits, dim=-1, onnx_trace=self.onnx_trace)
         else:
