@@ -15,11 +15,6 @@ from fairseq.criterions import FairseqCriterion, register_criterion
 @register_criterion('sentence_prediction')
 class SentencePredictionCriterion(FairseqCriterion):
 
-    def __init__(self, task, classification_head_name, regression_target):
-        super().__init__(task)
-        self.classification_head_name = classification_head_name
-        self.regression_target = regression_target
-
     @staticmethod
     def add_args(parser):
         # fmt: off
@@ -38,34 +33,41 @@ class SentencePredictionCriterion(FairseqCriterion):
         """
         assert (
             hasattr(model, 'classification_heads')
-            and self.classification_head_name in model.classification_heads
+            and self.args.classification_head_name in model.classification_heads
         ), 'model must provide sentence classification head for --criterion=sentence_prediction'
 
         logits, _ = model(
             **sample['net_input'],
             features_only=True,
-            classification_head_name=self.classification_head_name,
+            classification_head_name=self.args.classification_head_name,
         )
         targets = model.get_targets(sample, [logits]).view(-1)
         sample_size = targets.numel()
 
-        if not self.regression_target:
-            lprobs = F.log_softmax(logits, dim=-1, dtype=torch.float32)
-            loss = F.nll_loss(lprobs, targets, reduction='sum')
+        if not self.args.regression_target:
+            loss = F.nll_loss(
+                F.log_softmax(logits, dim=-1, dtype=torch.float32),
+                targets,
+                reduction='sum',
+            )
         else:
-            logits = logits.view(-1).float()
+            logits = logits.squeeze().float()
             targets = targets.float()
-            loss = F.mse_loss(logits, targets, reduction='sum')
+            loss = F.mse_loss(
+                logits,
+                targets,
+                reduction='sum',
+            )
 
         logging_output = {
-            'loss': loss.data,
+            'loss': utils.item(loss.data) if reduce else loss.data,
             'ntokens': sample['ntokens'],
             'nsentences': sample_size,
             'sample_size': sample_size,
         }
-        if not self.regression_target:
+        if not self.args.regression_target:
             preds = logits.argmax(dim=1)
-            logging_output['ncorrect'] = (preds == targets).sum()
+            logging_output['ncorrect'] = utils.item((preds == targets).sum())
 
         return loss, sample_size, logging_output
 

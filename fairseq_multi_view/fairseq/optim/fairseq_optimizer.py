@@ -54,8 +54,18 @@ class FairseqOptimizer(object):
 
     def set_lr(self, lr):
         """Set the learning rate."""
+        i = 0
         for param_group in self.optimizer.param_groups:
-            param_group['lr'] = lr
+            
+            if i == 0:
+                param_group['lr'] = lr
+            elif i == 1:
+                if self.args.lr_weight >= 1:
+                    param_group['lr'] = lr * self.args.lr_weight #3e-4 #lr * 1000 #3e-4 #lr * 100 #3e-4#lr * 100 #1e-3
+                else:
+                    param_group['lr'] = self.args.lr_weight
+
+            i = i+1
 
     def state_dict(self):
         """Return the optimizer's state dict."""
@@ -86,9 +96,9 @@ class FairseqOptimizer(object):
             if p.grad is not None:
                 p.grad.data.mul_(c)
 
-    def clip_grad_norm(self, max_norm, aggregate_norm_fn=None):
+    def clip_grad_norm(self, max_norm):
         """Clips gradient norm."""
-        return utils.clip_grad_norm_(self.params, max_norm, aggregate_norm_fn)
+        return utils.clip_grad_norm_(self.params, max_norm)
 
     def step(self, closure=None):
         """Performs a single optimization step."""

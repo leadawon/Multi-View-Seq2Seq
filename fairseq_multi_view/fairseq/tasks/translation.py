@@ -39,7 +39,7 @@ def load_langpair_dataset(
     combine, dataset_impl, upsample_primary,
     left_pad_source, left_pad_target, max_source_positions,
     max_target_positions, prepend_bos=False, load_alignments=False,
-    truncate_source=False, append_source_id=False
+    truncate_source=False, multi_views = False,
 ):
 
     def split_exists(split, src, tgt, lang, data_path):
@@ -49,14 +49,24 @@ def load_langpair_dataset(
     src_datasets = []
     tgt_datasets = []
 
+    src2_datasets = []
+
+    
+
     for k in itertools.count():
         split_k = split + (str(k) if k > 0 else '')
 
         # infer langcode
         if split_exists(split_k, src, tgt, src, data_path):
             prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, src, tgt))
+            if multi_views:
+                prefix2 = os.path.join(data_path[:-2], '{}.{}-{}.'.format(split_k, src, tgt))
+
         elif split_exists(split_k, tgt, src, src, data_path):
             prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, tgt, src))
+            if multi_views:
+                prefix2 = os.path.join(data_path[:-2], '{}.{}-{}.'.format(split_k, tgt, src))
+
         else:
             if k > 0:
                 break
@@ -64,6 +74,11 @@ def load_langpair_dataset(
                 raise FileNotFoundError('Dataset not found: {} ({})'.format(split, data_path))
 
         src_dataset = data_utils.load_indexed_dataset(prefix + src, src_dict, dataset_impl)
+        
+        if multi_views:
+            src_dataset2 = data_utils.load_indexed_dataset(prefix2 + src, src_dict, dataset_impl)
+
+
         if truncate_source:
             src_dataset = AppendTokenDataset(
                 TruncateDataset(
@@ -72,11 +87,23 @@ def load_langpair_dataset(
                 ),
                 src_dict.eos(),
             )
-        src_datasets.append(src_dataset)
+            if multi_views:
+                src_dataset2 = AppendTokenDataset(
+                    TruncateDataset(
+                        StripTokenDataset(src_dataset2, src_dict.eos()),
+                        max_source_positions - 1,
+                    ),
+                    src_dict.eos(),
+                )
 
-        tgt_dataset = data_utils.load_indexed_dataset(prefix + tgt, tgt_dict, dataset_impl)
-        if tgt_dataset is not None:
-            tgt_datasets.append(tgt_dataset)
+        src_datasets.append(src_dataset)
+        
+        if multi_views:
+            src2_datasets.append(src_dataset2)
+
+        tgt_datasets.append(
+            data_utils.load_indexed_dataset(prefix + tgt, tgt_dict, dataset_impl)
+        )
 
         logger.info('{} {} {}-{} {} examples'.format(
             data_path, split_k, src, tgt, len(src_datasets[-1])
@@ -85,32 +112,36 @@ def load_langpair_dataset(
         if not combine:
             break
 
-    assert len(src_datasets) == len(tgt_datasets) or len(tgt_datasets) == 0
+
+    
+    assert len(src_datasets) == len(tgt_datasets)
+
+    if multi_views:
+        assert len(src_datasets) == len(src2_datasets)
 
     if len(src_datasets) == 1:
-        src_dataset = src_datasets[0]
-        tgt_dataset = tgt_datasets[0] if len(tgt_datasets) > 0 else None
+        src_dataset, tgt_dataset = src_datasets[0], tgt_datasets[0]
+        
+        if multi_views:
+            src2_dataset =  src2_datasets[0]
+
+            print("!!!", len(src_dataset), len(src2_dataset))
+            #print("!!!", src_dataset[0], src2_dataset[0])
+
     else:
         sample_ratios = [1] * len(src_datasets)
         sample_ratios[0] = upsample_primary
         src_dataset = ConcatDataset(src_datasets, sample_ratios)
-        if len(tgt_datasets) > 0:
-            tgt_dataset = ConcatDataset(tgt_datasets, sample_ratios)
-        else:
-            tgt_dataset = None
+        tgt_dataset = ConcatDataset(tgt_datasets, sample_ratios)
 
     if prepend_bos:
         assert hasattr(src_dict, "bos_index") and hasattr(tgt_dict, "bos_index")
         src_dataset = PrependTokenDataset(src_dataset, src_dict.bos())
-        if tgt_dataset is not None:
-            tgt_dataset = PrependTokenDataset(tgt_dataset, tgt_dict.bos())
 
-    eos = None
-    if append_source_id:
-        src_dataset = AppendTokenDataset(src_dataset, src_dict.index('[{}]'.format(src)))
-        if tgt_dataset is not None:
-            tgt_dataset = AppendTokenDataset(tgt_dataset, tgt_dict.index('[{}]'.format(tgt)))
-        eos = tgt_dict.index('[{}]'.format(tgt))
+        if multi_views:
+            src2_dataset = PrependTokenDataset(src2_dataset, src_dict.bos())
+
+        tgt_dataset = PrependTokenDataset(tgt_dataset, tgt_dict.bos())
 
     align_dataset = None
     if load_alignments:
@@ -118,16 +149,30 @@ def load_langpair_dataset(
         if indexed_dataset.dataset_exists(align_path, impl=dataset_impl):
             align_dataset = data_utils.load_indexed_dataset(align_path, None, dataset_impl)
 
-    tgt_dataset_sizes = tgt_dataset.sizes if tgt_dataset is not None else None
-    return LanguagePairDataset(
-        src_dataset, src_dataset.sizes, src_dict,
-        tgt_dataset, tgt_dataset_sizes, tgt_dict,
-        left_pad_source=left_pad_source,
-        left_pad_target=left_pad_target,
-        max_source_positions=max_source_positions,
-        max_target_positions=max_target_positions,
-        align_dataset=align_dataset, eos=eos
-    )
+    if multi_views:
+        return LanguagePairDataset(
+            src_dataset, src_dataset.sizes, src_dict,
+            tgt_dataset, tgt_dataset.sizes, tgt_dict,
+            
+            src2 = src2_dataset,
+
+            left_pad_source=left_pad_source,
+            left_pad_target=left_pad_target,
+            max_source_positions=max_source_positions,
+            max_target_positions=max_target_positions,
+            align_dataset=align_dataset,
+        )
+    else:
+         return LanguagePairDataset(
+            src_dataset, src_dataset.sizes, src_dict,
+            tgt_dataset, tgt_dataset.sizes, tgt_dict,
+            left_pad_source=left_pad_source,
+            left_pad_target=left_pad_target,
+            max_source_positions=max_source_positions,
+            max_target_positions=max_target_positions,
+            align_dataset=align_dataset,
+        )
+
 
 
 @register_task('translation')
@@ -181,14 +226,14 @@ class TranslationTask(FairseqTask):
         parser.add_argument('--eval-bleu', action='store_true',
                             help='evaluation with BLEU scores')
         parser.add_argument('--eval-bleu-detok', type=str, default="space",
-                            help='detokenize before computing BLEU (e.g., "moses"); '
+                            help='detokenizer before computing BLEU (e.g., "moses"); '
                                  'required if using --eval-bleu; use "space" to '
                                  'disable detokenization; see fairseq.data.encoders '
                                  'for other options')
         parser.add_argument('--eval-bleu-detok-args', type=str, metavar='JSON',
                             help='args for building the tokenizer, if needed')
         parser.add_argument('--eval-tokenized-bleu', action='store_true', default=False,
-                            help='compute tokenized BLEU instead of sacrebleu')
+                            help='if setting, we compute tokenized BLEU instead of sacrebleu')
         parser.add_argument('--eval-bleu-remove-bpe', nargs='?', const='@@ ', default=None,
                             help='remove BPE before computing BLEU')
         parser.add_argument('--eval-bleu-args', type=str, metavar='JSON',
@@ -196,12 +241,18 @@ class TranslationTask(FairseqTask):
                                  'e.g., \'{"beam": 4, "lenpen": 0.6}\'')
         parser.add_argument('--eval-bleu-print-samples', action='store_true',
                             help='print sample generations during validation')
+
+        
         # fmt: on
 
     def __init__(self, args, src_dict, tgt_dict):
         super().__init__(args)
         self.src_dict = src_dict
         self.tgt_dict = tgt_dict
+
+        #TODO:
+        #print('!!!!! multi-views:', args.multi_views)
+        self.multi_views = args.multi_views
 
     @classmethod
     def setup_task(cls, args, **kwargs):
@@ -213,7 +264,7 @@ class TranslationTask(FairseqTask):
         args.left_pad_source = options.eval_bool(args.left_pad_source)
         args.left_pad_target = options.eval_bool(args.left_pad_target)
 
-        paths = utils.split_paths(args.data)
+        paths = args.data.split(os.pathsep)
         assert len(paths) > 0
         # find language pair automatically
         if args.source_lang is None or args.target_lang is None:
@@ -227,23 +278,26 @@ class TranslationTask(FairseqTask):
         assert src_dict.pad() == tgt_dict.pad()
         assert src_dict.eos() == tgt_dict.eos()
         assert src_dict.unk() == tgt_dict.unk()
+        
         logger.info('[{}] dictionary: {} types'.format(args.source_lang, len(src_dict)))
         logger.info('[{}] dictionary: {} types'.format(args.target_lang, len(tgt_dict)))
 
         return cls(args, src_dict, tgt_dict)
 
-    def load_dataset(self, split, epoch=1, combine=False, **kwargs):
+    def load_dataset(self, split, epoch=0, combine=False, **kwargs):
         """Load a given dataset split.
 
         Args:
             split (str): name of the split (e.g., train, valid, test)
         """
-        paths = utils.split_paths(self.args.data)
+        paths = self.args.data.split(os.pathsep)
         assert len(paths) > 0
-        data_path = paths[(epoch - 1) % len(paths)]
+        data_path = paths[epoch % len(paths)]
 
         # infer langcode
         src, tgt = self.args.source_lang, self.args.target_lang
+
+
 
         self.datasets[split] = load_langpair_dataset(
             data_path, split, src, self.src_dict, tgt, self.tgt_dict,
@@ -255,13 +309,13 @@ class TranslationTask(FairseqTask):
             max_target_positions=self.args.max_target_positions,
             load_alignments=self.args.load_alignments,
             truncate_source=self.args.truncate_source,
+            multi_views = self.multi_views,
         )
 
-    def build_dataset_for_inference(self, src_tokens, src_lengths):
-        return LanguagePairDataset(src_tokens, src_lengths, self.source_dictionary)
+    def build_dataset_for_inference(self, src_tokens, src_lengths, src_tokens2 = None, src_length2 = None):
+        return LanguagePairDataset(src_tokens, src_lengths, self.source_dictionary, src2 = src_tokens2, src2_sizes = src_lengths)
 
     def build_model(self, args):
-        model = super().build_model(args)
         if getattr(args, 'eval_bleu', False):
             assert getattr(args, 'eval_bleu_detok', None) is not None, (
                 '--eval-bleu-detok is required if using --eval-bleu; '
@@ -275,11 +329,12 @@ class TranslationTask(FairseqTask):
             ))
 
             gen_args = json.loads(getattr(args, 'eval_bleu_args', '{}') or '{}')
-            self.sequence_generator = self.build_generator([model], Namespace(**gen_args))
-        return model
+            self.sequence_generator = self.build_generator(Namespace(**gen_args))
+        return super().build_model(args)
 
     def valid_step(self, sample, model, criterion):
         loss, sample_size, logging_output = super().valid_step(sample, model, criterion)
+        
         if self.args.eval_bleu:
             bleu = self._inference_with_bleu(self.sequence_generator, sample, model)
             logging_output['_bleu_sys_len'] = bleu.sys_len
@@ -351,14 +406,7 @@ class TranslationTask(FairseqTask):
             s = self.tgt_dict.string(
                 toks.int().cpu(),
                 self.args.eval_bleu_remove_bpe,
-                # The default unknown string in fairseq is `<unk>`, but
-                # this is tokenized by sacrebleu as `< unk >`, inflating
-                # BLEU scores. Instead, we use a somewhat more verbose
-                # alternative that is unlikely to appear in the real
-                # reference, but doesn't get split into multiple tokens.
-                unk_string=(
-                    "UNKNOWNTOKENINREF" if escape_unk else "UNKNOWNTOKENINHYP"
-                ),
+                escape_unk=escape_unk,
             )
             if self.tokenizer:
                 s = self.tokenizer.decode(s)
@@ -375,7 +423,5 @@ class TranslationTask(FairseqTask):
         if self.args.eval_bleu_print_samples:
             logger.info('example hypothesis: ' + hyps[0])
             logger.info('example reference: ' + refs[0])
-        if self.args.eval_tokenized_bleu:
-            return sacrebleu.corpus_bleu(hyps, [refs], tokenize='none')
-        else:
-            return sacrebleu.corpus_bleu(hyps, [refs])
+        tokenize = sacrebleu.DEFAULT_TOKENIZER if not self.args.eval_tokenized_bleu else 'none'
+        return sacrebleu.corpus_bleu(hyps, [refs], tokenize=tokenize)
