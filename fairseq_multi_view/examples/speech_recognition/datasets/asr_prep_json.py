@@ -14,7 +14,7 @@ import os
 import json
 import sentencepiece as spm
 import multiprocessing
-import torchaudio
+
 
 from fairseq.data import Dictionary
 
@@ -22,6 +22,7 @@ MILLISECONDS_TO_SECONDS = 0.001
 
 
 def process_sample(aud_path, lable, utt_id, sp, tgt_dict):
+    import torchaudio
     input = {}
     output = {}
     si, ei = torchaudio.info(aud_path)
