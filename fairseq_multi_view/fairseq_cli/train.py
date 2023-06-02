@@ -15,9 +15,6 @@ import sys
 
 import numpy as np
 import torch
-from rouge import Rouge, FilesRouge
-
-from tqdm import tqdm
 
 from fairseq import (
     checkpoint_utils, distributed_utils, metrics, options, progress_bar, tasks, utils
@@ -25,9 +22,7 @@ from fairseq import (
 from fairseq.data import iterators
 from fairseq.trainer import Trainer
 from fairseq.meters import StopwatchMeter
-from fairseq.models.bart.hub_interface import BARTHubInterface
 
-#torch.multiprocessing.set_sharing_strategy('file_system')
 
 logging.basicConfig(
     format='%(asctime)s | %(levelname)s | %(name)s | %(message)s',
@@ -94,9 +89,6 @@ def main(args, init_distributed=False):
     train_meter = StopwatchMeter()
     train_meter.start()
     valid_subsets = args.valid_subset.split(',')
-
-    print(args.multi_views)
-
     while (
         lr > args.min_lr
         and (
@@ -106,8 +98,6 @@ def main(args, init_distributed=False):
         )
         and trainer.get_num_updates() < max_update
     ):
-        
-
         # train for one epoch
         train(args, trainer, task, epoch_itr)
 
@@ -119,130 +109,9 @@ def main(args, init_distributed=False):
         # only use first validation loss to update the learning rate
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
 
-        
-        
-        bart = BARTHubInterface(args, task, trainer.model).cuda()
-        #print(bart.device)
-        bart.eval()
-        count = 1
-        bsz = 8
-
-
-        print("Test on val set: ")
-        
-
-        with open('../data/val_sent_trans_cons_label.source') as source, open('../data/val_sent_c99_label.source') as source2, open('./val_best_multi_attn_'+str(args.lr_weight)+'_.hypo', 'wt', encoding='utf-8') as fout:
-            s1 = source.readlines()
-            s2 = source2.readlines()
-            
-            slines = [s1[0].strip()]
-            slines2 = [s2[0].strip()]
-            
-            for i in tqdm(range(1, len(s1))):
-                if count % bsz == 0:
-                    with torch.no_grad():
-                        if args.multi_views:
-                            hypotheses_batch = bart.sample(slines, sentences2 = slines2, balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
-                        else:
-                            hypotheses_batch = bart.sample(slines, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
-                    for hypothesis in hypotheses_batch:
-                        fout.write(hypothesis + '\n')
-                        fout.flush()
-                    slines = []
-                    slines2 = []
-                
-                slines.append(s1[i].strip())
-                slines2.append(s2[i].strip())
-            
-                count += 1
-                
-            if slines != []:
-                if args.multi_views:
-                    hypotheses_batch = bart.sample(slines, sentences2 = slines2, balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
-                else:
-                    hypotheses_batch = bart.sample(slines, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
-                #hypotheses_batch = bart.sample(slines, sentences2 = slines2, balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
-                for hypothesis in hypotheses_batch:
-                    fout.write(hypothesis + '\n')
-                    fout.flush()
-        hyp_path = './val_best_multi_attn_'+str(args.lr_weight)+'_.hypo'
-        ref_path = '../data/val_sent_trans_cons_label.target'
-        hypothesis = []
-        with open(hyp_path, 'r') as f:
-            lines = f.readlines()
-            for l in lines:
-                hypothesis.append(l[:-1])
-        
-        reference = []
-        with open(ref_path, 'r') as f:
-            lines = f.readlines()
-            for l in lines:
-                reference.append(l[:-1])
-
-        rouge = Rouge()
-        print("Val", rouge.get_scores(hypothesis, reference, avg = True))
-        
-
         # save checkpoint
         if epoch_itr.epoch % args.save_interval == 0:
             checkpoint_utils.save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
-        
-        
-        print("Test on testing set: ")
-
-        count = 1
-        bsz = 8
-        with open('../data/test_sent_trans_cons_label.source') as source, open('../data/test_sent_c99_label.source') as source2, open('./test_best_multi_attn_'+str(args.lr_weight)+'_.hypo', 'wt', encoding='utf-8') as fout:
-            s1 = source.readlines()
-            s2 = source2.readlines()
-            
-            slines = [s1[0].strip()]
-            slines2 = [s2[0].strip()]
-            
-            for i in tqdm(range(1, len(s1))):
-                if count % bsz == 0:
-                    with torch.no_grad():
-                        if args.multi_views:
-                            hypotheses_batch = bart.sample(slines, sentences2 = slines2, balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
-                        else:
-                            hypotheses_batch = bart.sample(slines, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
-                    for hypothesis in hypotheses_batch:
-                        fout.write(hypothesis + '\n')
-                        fout.flush()
-                    slines = []
-                    slines2 = []
-                
-                slines.append(s1[i].strip())
-                slines2.append(s2[i].strip())
-            
-                count += 1
-                
-            if slines != []:
-                if args.multi_views:
-                    hypotheses_batch = bart.sample(slines, sentences2 = slines2, balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
-                else:
-                    hypotheses_batch = bart.sample(slines, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
-                
-                for hypothesis in hypotheses_batch:
-                    fout.write(hypothesis + '\n')
-                    fout.flush()
-        hyp_path = './test_best_multi_attn_'+str(args.lr_weight)+'_.hypo'
-        ref_path = '../data/test_sent_trans_cons_label.target'
-        hypothesis = []
-        with open(hyp_path, 'r') as f:
-            lines = f.readlines()
-            for l in lines:
-                hypothesis.append(l[:-1])
-        
-        reference = []
-        with open(ref_path, 'r') as f:
-            lines = f.readlines()
-            for l in lines:
-                reference.append(l[:-1])
-
-        rouge = Rouge()
-        print('Test', rouge.get_scores(hypothesis, reference, avg = True))
-        
 
         # early stop
         if should_stop_early(args, valid_losses[0]):
@@ -402,7 +271,6 @@ def distributed_main(i, args, start_rank=0):
 
 
 def cli_main(modify_parser=None):
-    
     parser = options.get_training_parser()
     args = options.parse_args_and_arch(parser, modify_parser=modify_parser)
 

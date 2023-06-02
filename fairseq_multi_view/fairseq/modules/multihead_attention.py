@@ -74,10 +74,10 @@ class MultiheadAttention(nn.Module):
         self.onnx_trace = False
 
         self.enable_torch_version = False
-        #if hasattr(F, "multi_head_attention_forward"):
-        #    self.enable_torch_version = True
-        #else:
-        #    self.enable_torch_version = False
+        if hasattr(F, "multi_head_attention_forward"):
+            self.enable_torch_version = True
+        else:
+            self.enable_torch_version = False
 
     def prepare_for_onnx_export_(self):
         self.onnx_trace = True
@@ -114,11 +114,6 @@ class MultiheadAttention(nn.Module):
         attn_mask: Optional[Tensor] = None,
         before_softmax: bool = False,
         need_head_weights: bool = False,
-
-        key2: Optional[Tensor] = None,
-        value2: Optional[Tensor] = None,
-        balance_weight = None,
-        key_padding_mask2 = None,
     ) -> Tuple[Tensor, Optional[Tensor]]:
         """Input shape: Time x Batch x Channel
 
@@ -151,7 +146,6 @@ class MultiheadAttention(nn.Module):
             and not static_kv
         ):
             assert key is not None and value is not None
-            #print("here")
             return F.multi_head_attention_forward(
                 query,
                 key,
@@ -177,7 +171,6 @@ class MultiheadAttention(nn.Module):
             )
 
         if incremental_state is not None:
-            #print("incremental_state not None")
             saved_state = self._get_input_buffer(incremental_state)
             if saved_state is not None and "prev_key" in saved_state:
                 # previous time steps are cached - no need to recompute
@@ -185,14 +178,6 @@ class MultiheadAttention(nn.Module):
                 if static_kv:
                     assert self.encoder_decoder_attention and not self.self_attention
                     key = value = None
-
-            if saved_state is not None and "prev_key2" in saved_state:
-                # previous time steps are cached - no need to recompute
-                # key and value if they are static
-                if static_kv:
-                    assert self.encoder_decoder_attention and not self.self_attention
-                    key2 = value2 = None
-
         else:
             saved_state = None
 
@@ -200,58 +185,28 @@ class MultiheadAttention(nn.Module):
             q = self.q_proj(query)
             k = self.k_proj(query)
             v = self.v_proj(query)
-            k2 = None
-            v2 = None
         elif self.encoder_decoder_attention:
-            
-            #print('key', key)
-
             # encoder-decoder attention
             q = self.q_proj(query)
             if key is None:
                 assert value is None
                 k = v = None
-                k2 = None
-                v2 = None
             else:
                 k = self.k_proj(key)
                 v = self.v_proj(key)
-
-                #print("here!!!")
-                k2 = None
-                v2 = None
-                if key2 is not None:
-                    k2 = self.k_proj(key2)
-                    v2 = self.v_proj(key2)
-
-            #print('k', k)
-            #print('v', v)
-
 
         else:
             assert key is not None and value is not None
             q = self.q_proj(query)
             k = self.k_proj(key)
             v = self.v_proj(value)
-            k2 = None
-            v2 = None
-        
         q *= self.scaling
-
-        
 
         if self.bias_k is not None:
             assert self.bias_v is not None
             k = torch.cat([k, self.bias_k.repeat(1, bsz, 1)])
             v = torch.cat([v, self.bias_v.repeat(1, bsz, 1)])
-
-            if key2 is not None:
-                k2 = torch.cat([k2, self.bias_k.repeat(1, bsz, 1)])
-                v2 = torch.cat([v2, self.bias_v.repeat(1, bsz, 1)])
-
-
             if attn_mask is not None:
-                print("Attn mask not None")
                 attn_mask = torch.cat(
                     [attn_mask, attn_mask.new_zeros(attn_mask.size(0), 1)], dim=1
                 )
@@ -260,14 +215,6 @@ class MultiheadAttention(nn.Module):
                     [
                         key_padding_mask,
                         key_padding_mask.new_zeros(key_padding_mask.size(0), 1),
-                    ],
-                    dim=1,
-                )
-            if key_padding_mask2 is not None:
-                key_padding_mask2 = torch.cat(
-                    [
-                        key_padding_mask2,
-                        key_padding_mask2.new_zeros(key_padding_mask2.size(0), 1),
                     ],
                     dim=1,
                 )
@@ -283,16 +230,6 @@ class MultiheadAttention(nn.Module):
                 .view(-1, bsz * self.num_heads, self.head_dim)
                 .transpose(0, 1)
             )
-
-        if k2 is not None:
-            k2 = (
-                k2.contiguous()
-                .view(-1, bsz * self.num_heads, self.head_dim)
-                .transpose(0, 1)
-            )
-
-        
-
         if v is not None:
             v = (
                 v.contiguous()
@@ -300,16 +237,7 @@ class MultiheadAttention(nn.Module):
                 .transpose(0, 1)
             )
 
-        if v2 is not None:
-            v2 = (
-                v2.contiguous()
-                .view(-1, bsz * self.num_heads, self.head_dim)
-                .transpose(0, 1)
-            )
-
         if saved_state is not None:
-            #print("Here saved state is not None!!!")
-
             # saved states are stored with shape (bsz, num_heads, seq_len, head_dim)
             if "prev_key" in saved_state:
                 _prev_key = saved_state["prev_key"]
@@ -320,18 +248,6 @@ class MultiheadAttention(nn.Module):
                 else:
                     assert k is not None
                     k = torch.cat([prev_key, k], dim=1)
-
-            
-            if "prev_key2" in saved_state:
-                _prev_key2 = saved_state["prev_key2"]
-                assert _prev_key2 is not None
-                prev_key2 = _prev_key2.view(bsz * self.num_heads, -1, self.head_dim)
-                if static_kv:
-                    k2 = prev_key2
-                else:
-                    assert k2 is not None
-                    k2 = torch.cat([prev_key2, k2], dim=1)
-
             if "prev_value" in saved_state:
                 _prev_value = saved_state["prev_value"]
                 assert _prev_value is not None
@@ -341,30 +257,10 @@ class MultiheadAttention(nn.Module):
                 else:
                     assert v is not None
                     v = torch.cat([prev_value, v], dim=1)
-
-            if "prev_value2" in saved_state:
-                #print("in")
-                _prev_value2 = saved_state["prev_value2"]
-                assert _prev_value2 is not None
-                prev_value2 = _prev_value2.view(bsz * self.num_heads, -1, self.head_dim)
-                if static_kv:
-                    v2 = prev_value2
-                else:
-                    assert v2 is not None
-                    v2 = torch.cat([prev_value2, v2], dim=1)
-
-
             prev_key_padding_mask: Optional[Tensor] = None
             if "prev_key_padding_mask" in saved_state:
                 prev_key_padding_mask = saved_state["prev_key_padding_mask"]
-
-            prev_key_padding_mask2: Optional[Tensor] = None
-            if "prev_key_padding_mask2" in saved_state:
-                prev_key_padding_mask2 = saved_state["prev_key_padding_mask2"]
-            
-
             assert k is not None and v is not None
-            
             key_padding_mask = MultiheadAttention._append_prev_key_padding_mask(
                 key_padding_mask=key_padding_mask,
                 prev_key_padding_mask=prev_key_padding_mask,
@@ -373,61 +269,25 @@ class MultiheadAttention(nn.Module):
                 static_kv=static_kv,
             )
 
-            if key_padding_mask2 is not None:
-                key_padding_mask2 = MultiheadAttention._append_prev_key_padding_mask(
-                    key_padding_mask=key_padding_mask2,
-                    prev_key_padding_mask=prev_key_padding_mask2,
-                    batch_size=bsz,
-                    src_len=k2.size(1),
-                    static_kv=static_kv,
-                )
-
-
-
             saved_state["prev_key"] = k.view(bsz, self.num_heads, -1, self.head_dim)
             saved_state["prev_value"] = v.view(bsz, self.num_heads, -1, self.head_dim)
             saved_state["prev_key_padding_mask"] = key_padding_mask
-
-            if k2 is not None:
-                saved_state["prev_key2"] = k2.view(bsz, self.num_heads, -1, self.head_dim)
-
-            if v2 is not None:
-                saved_state["prev_value2"] = v2.view(bsz, self.num_heads, -1, self.head_dim)
-            
-            if key_padding_mask2 is not None:
-                saved_state["prev_key_padding_mask2"] = key_padding_mask2
-
             # In this branch incremental_state is never None
             assert incremental_state is not None
             incremental_state = self._set_input_buffer(incremental_state, saved_state)
-        
         assert k is not None
         src_len = k.size(1)
-
-        if k2 is not None:
-            src_len2 = k2.size(1)
 
         # This is part of a workaround to get around fork/join parallelism
         # not supporting Optional types.
         if key_padding_mask is not None and key_padding_mask.dim() == 0:
             key_padding_mask = None
 
-        if key_padding_mask2 is not None and key_padding_mask2.dim() == 0:
-            key_padding_mask2 = None
-
-        #print(key_padding_mask.shape)
-        #print(key_padding_mask2.shape)
-
         if key_padding_mask is not None:
             assert key_padding_mask.size(0) == bsz
             assert key_padding_mask.size(1) == src_len
 
-        if key_padding_mask2 is not None:
-            assert key_padding_mask2.size(0) == bsz
-            assert key_padding_mask2.size(1) == src_len2
-
         if self.add_zero_attn:
-            #print("add zero attn")
             assert v is not None
             src_len += 1
             k = torch.cat([k, k.new_zeros((k.size(0), 1) + k.size()[2:])], dim=1)
@@ -447,16 +307,9 @@ class MultiheadAttention(nn.Module):
                     dim=1,
                 )
 
-        #print("not add zero attn")
         attn_weights = torch.bmm(q, k.transpose(1, 2))
         attn_weights = MultiheadAttention.apply_sparse_mask(attn_weights, tgt_len, src_len, bsz)
 
-
-        if k2 is not None:
-            attn_weights2 = torch.bmm(q, k2.transpose(1, 2))
-            attn_weights2 = MultiheadAttention.apply_sparse_mask(attn_weights2, tgt_len, src_len2, bsz)
-
-        
         assert list(attn_weights.size()) == [bsz * self.num_heads, tgt_len, src_len]
 
         if attn_mask is not None:
@@ -464,12 +317,6 @@ class MultiheadAttention(nn.Module):
             if self.onnx_trace:
                 attn_mask = attn_mask.repeat(attn_weights.size(0), 1, 1)
             attn_weights += attn_mask
-            if k2 is not None:
-                attn_weights2 += attn_mask
-
-
-
-        
 
         if key_padding_mask is not None:
             # don't attend to padding symbols
@@ -479,19 +326,8 @@ class MultiheadAttention(nn.Module):
             )
             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
 
-        if key_padding_mask2 is not None:
-            # don't attend to padding symbols
-            #print("padding attn_weights2")
-            attn_weights2 = attn_weights2.view(bsz, self.num_heads, tgt_len, src_len2)
-            attn_weights2 = attn_weights2.masked_fill(
-                key_padding_mask2.unsqueeze(1).unsqueeze(2).to(torch.bool), float("-inf")
-            )
-            attn_weights2 = attn_weights2.view(bsz * self.num_heads, tgt_len, src_len2)
-
         if before_softmax:
-            
             return attn_weights, v
-
 
         attn_weights_float = utils.softmax(
             attn_weights, dim=-1, onnx_trace=self.onnx_trace
@@ -502,143 +338,26 @@ class MultiheadAttention(nn.Module):
             p=self.dropout,
             training=self.training,
         )
-
-        if key_padding_mask2 is not None:
-            attn_weights_float2 = utils.softmax(
-            attn_weights2, dim=-1, onnx_trace=self.onnx_trace
-            )
-            attn_weights2 = attn_weights_float2.type_as(attn_weights2)
-            attn_probs2 = F.dropout(
-                attn_weights_float2.type_as(attn_weights2),
-                p=self.dropout,
-                training=self.training,
-            )
-        else:
-            attn_weights_float2 = None
-            attn_probs2  = None
-
         assert v is not None
-
-
-
-
         attn = torch.bmm(attn_probs, v)
-
-        #print('embed_dim', embed_dim)
-        #print("sec_len", src_len)
-        #print("target_len", tgt_len)
-        #print("attn_probs", attn_probs.shape)
-        #print("v", v.shape)
-        #print("num heads", self.num_heads)
-
-        if v2 is not None:
-            #print('not None')
-            attn2 = torch.bmm(attn_probs2, v2)
-
-        '''
-        if balance_weight is not None:
-
-            #print('balance_weight', balance_weight.shape)
-
-            balance_weight = balance_weight.repeat([self.num_heads, 1])
-
-            balance_weight1 = balance_weight[:,0].view([balance_weight.shape[0], 1, 1])
-
-            #balance_weight2 = balance_weight[:,1].view([balance_weight.shape[0], 1, 1])
-            
-            balance_weight1 = balance_weight1.repeat([1, tgt_len, self.head_dim])
-            #balance_weight2 = balance_weight2.repeat([1, tgt_len, self.head_dim])
-
-            
-            #attn = balance_weight1 * attn + balance_weight2 * attn2
-
-            #attn = attn 
-
-            #attn = 0.6 * attn + 0.4 * attn2
-            attn = 0.8 * attn + 0.2 * attn2
-            #print('balance_weight', balance_weight.shape)
-            #print('balance_weight1', balance_weight1.shape)
-            #print('attn shape', attn.shape)
-            #print('attn weights float', attn_weights_float.shape)
-            # 64 * 60 * 192
-
-            #attn = balance_weight1 * attn + (1 - balance_weight1) * attn2
-
-        '''
-
         assert list(attn.size()) == [bsz * self.num_heads, tgt_len, self.head_dim]
-        
         if self.onnx_trace and attn.size(1) == 1:
-            print("here onnx_trace")
             # when ONNX tracing a single decoder step (sequence length == 1)
             # the transpose is a no-op copy before view, thus unnecessary
             attn = attn.contiguous().view(tgt_len, bsz, embed_dim)
-            if v2 is not None:
-                attn2 = attn2.contiguous().view(tgt_len, bsz, embed_dim)
         else:
-            #print('here')
             attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
-            if v2 is not None:
-                attn2 = attn2.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
-        
-        
         attn = self.out_proj(attn)
-
-        if v2 is not None:
-            attn2 = self.out_proj(attn2)
-        
-        #if v2 is not None:
-        #    print('attn', attn)
-        #    print('attn2', attn2)
-
-        #if v2 is not None:
-            #attn =  1.0* attn  + 0 * attn2
-        #    attn = 0 * attn + 1 * attn2
-        #print(attn)
-        
-        if balance_weight is not None:
-            #print(balance_weight.shape)
-            
-            balance_weight_temp = torch.cat(tgt_len * [balance_weight.unsqueeze(0)], dim = 0).unsqueeze(-1)
-            #print(balance_weight_temp.shape)
-            temp_attn = torch.cat([attn.unsqueeze(2), attn2.unsqueeze(2)], dim = 2)
-            attn = temp_attn.mul(balance_weight_temp)
-            attn = torch.sum(attn, dim = 2)
-
-            #print(balance_weight)
-            
-            #print(attn.shape)
-
-        #attn = attn2
-        
         attn_weights: Optional[Tensor] = None
-        attn_weights2 = None
-
         if need_weights:
             attn_weights = attn_weights_float.view(
                 bsz, self.num_heads, tgt_len, src_len
             ).transpose(1, 0)
-
-            if attn_weights_float2 is not None:
-                attn_weights2 = attn_weights_float2.view(
-                    bsz, self.num_heads, tgt_len, src_len2
-                ).transpose(1, 0)
-
             if not need_head_weights:
                 # average attention weights over heads
                 attn_weights = attn_weights.mean(dim=0)
-                if attn_weights2 is not None:   
-                    attn_weights2 = attn_weights2.mean(dim = 0)
-        
 
-
-        #attn_weights = None
-        #attn_weights2 = None
-
-        if attn_weights2 is not None and need_weights:
-            return attn,  attn_weights,  attn_weights2
-        else:
-            return attn, attn_weights, None
+        return attn, attn_weights
 
     @staticmethod
     def _append_prev_key_padding_mask(
@@ -740,6 +459,3 @@ class MultiheadAttention(nn.Module):
 
         for key, value in items_to_add.items():
             state_dict[key] = value
-
-
-

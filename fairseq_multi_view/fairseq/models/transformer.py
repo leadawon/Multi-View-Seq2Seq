@@ -260,7 +260,6 @@ class TransformerModel(FairseqEncoderDecoderModel):
             cls_input=cls_input,
             return_all_hiddens=return_all_hiddens,
         )
-        
         decoder_out = self.decoder(
             prev_output_tokens,
             encoder_out=encoder_out,
@@ -320,7 +319,6 @@ class TransformerAlignModel(TransformerModel):
         features_only=False,
         **extra_args,
     ):
-       
         attn_args = {
             "alignment_layer": self.alignment_layer,
             "alignment_heads": self.alignment_heads,
@@ -444,10 +442,6 @@ class TransformerEncoder(FairseqEncoder):
                   hidden states of shape `(src_len, batch, embed_dim)`.
                   Only populated if *return_all_hiddens* is True.
         """
-        #print("using this encoder!!!")
-        #print(src_tokens)
-        #print(src_lengths)
-        
         if self.layer_wise_attention:
             return_all_hiddens = True
 
@@ -494,7 +488,6 @@ class TransformerEncoder(FairseqEncoder):
         Returns:
             *encoder_out* rearranged according to *new_order*
         """
-        
         if encoder_out.encoder_out is not None:
             encoder_out = encoder_out._replace(
                 encoder_out=encoder_out.encoder_out.index_select(1, new_order)
@@ -670,8 +663,6 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         alignment_heads: Optional[int] = None,
         src_lengths: Optional[Any] = None,
         return_all_hiddens: bool = False,
-        encoder_out2: Optional[EncoderOut] = None,
-        balance_weight = None,
     ):
         """
         Args:
@@ -689,21 +680,13 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 - the decoder's output of shape `(batch, tgt_len, vocab)`
                 - a dictionary with any model-specific outputs
         """
-        #print('Here')
-        #print('1', encoder_out.encoder_out)
-        #print('2', encoder_out2.encoder_out)
         x, extra = self.extract_features(
             prev_output_tokens,
             encoder_out=encoder_out,
             incremental_state=incremental_state,
             alignment_layer=alignment_layer,
             alignment_heads=alignment_heads,
-            encoder_out2=encoder_out2,
-            balance_weight = balance_weight,
         )
-
-        #print(x)
-        #print('Here')
         if not features_only:
             x = self.output_layer(x)
         return x, extra
@@ -716,8 +699,6 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         full_context_alignment: bool = False,
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
-        encoder_out2: Optional[EncoderOut] = None,
-        balance_weight = None,
     ):
         """
         Similar to *forward* but only return features.
@@ -755,38 +736,22 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             if positions is not None:
                 positions = positions[:, -1:]
 
-        #print('before embed x', prev_output_tokens)
-        
         # embed tokens and positions
         x = self.embed_scale * self.embed_tokens(prev_output_tokens)
-        
-        #print('after embed x', x)
-        
-        
+
         if self.project_in_dim is not None:
             x = self.project_in_dim(x)
-
-
-        #print('after project_in_dim x', x)
 
         if positions is not None:
             x += positions
 
-        #print('after positions x', x)
-
         if self.layernorm_embedding is not None:
             x = self.layernorm_embedding(x)
 
-        #print('after layernorm_embedding x', x)
-
         x = F.dropout(x, p=self.dropout, training=self.training)
-
-        #print('after dropout x', x)
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
-
-        #print("before attn layer x", x)
 
         self_attn_padding_mask: Optional[Tensor] = None
         if self.cross_self_attention or prev_output_tokens.eq(self.padding_idx).any():
@@ -799,24 +764,11 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             encoder_state: Optional[Tensor] = None
             if encoder_out is not None:
                 if self.layer_wise_attention:
-                    #print("layer_wise_attention")
                     encoder_states = encoder_out.encoder_states
                     assert encoder_states is not None
                     encoder_state = encoder_states[idx]
                 else:
-                    #print("not layer_wise_attention")
                     encoder_state = encoder_out.encoder_out
-
-            encoder_state2: Optional[Tensor] = None
-            if encoder_out2 is not None:
-                if self.layer_wise_attention:
-                    #print("layer_wise_attention")
-                    encoder_states2 = encoder_out2.encoder_states
-                    assert encoder_states2 is not None
-                    encoder_state2 = encoder_states2[idx]
-                else:
-                    #print("not layer_wise_attention")
-                    encoder_state2 = encoder_out2.encoder_out
 
             if incremental_state is None and not full_context_alignment:
                 self_attn_mask = self.buffered_future_mask(x)
@@ -825,10 +777,6 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             dropout_probability = torch.empty(1).uniform_()
-
-
-
-            
             if not self.training or (dropout_probability > self.decoder_layerdrop):
                 x, layer_attn, _ = layer(
                     x,
@@ -841,40 +789,17 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                     self_attn_padding_mask=self_attn_padding_mask,
                     need_attn=bool((idx == alignment_layer)),
                     need_head_weights=bool((idx == alignment_layer)),
-                    encoder_out2 = encoder_state2,
-                    encoder_padding_mask2 = encoder_out2.encoder_padding_mask if encoder_out2 is not None else None,
-                    balance_weight = balance_weight,
                 )
-
-                
-
-                if balance_weight is not None:
-                    layer_attn2 = _
-                else:
-                    layer_attn2 = None
-
                 inner_states.append(x)
-
-                attn2 = None
                 if layer_attn is not None and idx == alignment_layer:
                     attn = layer_attn.float()
-                    if layer_attn2 is not None:
-                        attn2 = layer_attn2.float()
-
-            
-           
 
         if attn is not None:
             if alignment_heads is not None:
                 attn = attn[:alignment_heads]
+
             # average probabilities over heads
             attn = attn.mean(dim=0)
-        
-        if attn2 is not None:
-            if alignment_heads is not None:
-                attn2 = attn2[:alignment_heads]
-            # average probabilities over heads
-            attn2 = attn2.mean(dim=0)
 
         if self.layer_norm is not None:
             x = self.layer_norm(x)
@@ -885,9 +810,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         if self.project_out_dim is not None:
             x = self.project_out_dim(x)
 
-        #print("in extract feature", x)
-
-        return x, {"attn": [attn], "attn2": [attn2], "inner_states": inner_states, "balance_weight": balance_weight}
+        return x, {"attn": [attn], "inner_states": inner_states}
 
     def output_layer(self, features):
         """Project features to the vocabulary size."""
