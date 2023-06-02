@@ -179,7 +179,7 @@ class LSTMModel(FairseqEncoderDecoderModel):
         )
         return cls(encoder, decoder)
 
-     def forward(
+    def forward(
         self,
         src_tokens,
         src_lengths,
