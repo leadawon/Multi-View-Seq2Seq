@@ -18,7 +18,7 @@ class FairseqDecoder(nn.Module):
         self.dictionary = dictionary
         self.onnx_trace = False
 
-    def forward(self, prev_output_tokens, encoder_out=None, **kwargs):
+    def forward(self, prev_output_tokens, encoder_out=None, encoder_out2 = None, **kwargs):
         """
         Args:
             prev_output_tokens (LongTensor): shifted output tokens of shape

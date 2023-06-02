@@ -7,7 +7,7 @@ import math
 
 from fairseq import metrics, utils
 from fairseq.criterions import FairseqCriterion, register_criterion
-
+import torch
 
 def label_smoothed_nll_loss(lprobs, target, epsilon, ignore_index=None, reduce=True):
     if target.dim() == lprobs.dim() - 1:
@@ -53,8 +53,24 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         2) the sample size, which is used as the denominator for the gradient
         3) logging outputs to display while training
         """
-        net_output = model(**sample['net_input'])
+        net_output = model(**sample['net_input'], balance = self.args.balance)
         loss, nll_loss = self.compute_loss(model, net_output, sample, reduce=reduce)
+        # adding entropy maximization loss here to try
+        balance_weight = net_output[1]['original_balance_weight']
+        #print('orignal, ', balance_weight)
+        #print('after sharpen, ', net_output[1]['balance_weight'])
+
+        #print(balance_weight)
+
+        #extra_loss = None
+
+        #print('before', loss)
+        if balance_weight is not None:
+            #print(balance_weight.shape)
+            entra_loss = torch.mean(torch.clamp(torch.sum(-balance_weight * balance_weight.log(), dim=1) - 0.69, min=0))
+            #print("Here!!!")
+            #print("extra_loss", entra_loss)
+            loss = loss + 0.01 * entra_loss
         sample_size = sample['target'].size(0) if self.sentence_avg else sample['ntokens']
         logging_output = {
             'loss': loss.data,
