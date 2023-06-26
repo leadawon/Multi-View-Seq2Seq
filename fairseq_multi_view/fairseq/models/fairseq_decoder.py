@@ -5,8 +5,6 @@
 
 import torch.nn as nn
 from fairseq import utils
-from typing import Dict, List, Optional, Tuple
-from torch import Tensor
 
 
 class FairseqDecoder(nn.Module):
@@ -56,11 +54,7 @@ class FairseqDecoder(nn.Module):
         """
         raise NotImplementedError
 
-    def get_normalized_probs(
-        self, 
-        net_output, 
-        log_probs, 
-        sample=None):
+    def get_normalized_probs(self, net_output, log_probs, sample):
         """Get normalized probabilities (or log probs) from a net's output."""
 
         if hasattr(self, "adaptive_softmax") and self.adaptive_softmax is not None:

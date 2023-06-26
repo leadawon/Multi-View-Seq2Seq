@@ -120,7 +120,7 @@ def main(args, init_distributed=False):
         lr = trainer.lr_step(epoch_itr.epoch, valid_losses[0])
 
         
-        ## multi-view custom
+        
         bart = BARTHubInterface(args, task, trainer.model).cuda()
         #print(bart.device)
         bart.eval()
@@ -182,7 +182,7 @@ def main(args, init_distributed=False):
         rouge = Rouge()
         print("Val", rouge.get_scores(hypothesis, reference, avg = True))
         
-        
+
         # save checkpoint
         if epoch_itr.epoch % args.save_interval == 0:
             checkpoint_utils.save_checkpoint(args, trainer, epoch_itr, valid_losses[0])
@@ -243,7 +243,7 @@ def main(args, init_distributed=False):
         rouge = Rouge()
         print('Test', rouge.get_scores(hypothesis, reference, avg = True))
         
-        # multiview custiom end
+
         # early stop
         if should_stop_early(args, valid_losses[0]):
             logger.info('early stop since valid performance hasn\'t improved for last {} runs'.format(args.patience))
@@ -440,5 +440,4 @@ def cli_main(modify_parser=None):
 
 
 if __name__ == '__main__':
-    print("#"*50)
     cli_main()
