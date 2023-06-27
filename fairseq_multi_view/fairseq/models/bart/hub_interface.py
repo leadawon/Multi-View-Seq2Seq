@@ -16,8 +16,6 @@ from typing import List
 from fairseq import utils
 from fairseq.data import encoders
 
-from fairseq.data.encoders.gpt2_bpe import *
-
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +32,7 @@ class BARTHubInterface(nn.Module):
         self.task = task
         self.model = model
 
-        
-
         self.bpe = encoders.build_bpe(args)
-        #print(args)
-        self.flag = 0
-        if self.bpe is None:
-            print("here bpe NONE")
-            self.bpe = GPT2BPE(args)
-            self.flag = 1
 
         self.max_positions = min(utils.resolve_max_positions(
             self.task.max_positions(),
@@ -76,7 +66,6 @@ class BARTHubInterface(nn.Module):
             >>> bart.encode('world').tolist()
             [0, 8331, 2]
         """
-        #print(sentence)
         tokens = self.bpe.encode(sentence)
         if len(tokens.split(' ')) > self.max_positions - 2:
             tokens = ' '.join(tokens.split(' ')[:self.max_positions - 2])
@@ -100,21 +89,12 @@ class BARTHubInterface(nn.Module):
             return sentences[0]
         return sentences
 
-    def _build_sample(self, src_tokens: List[torch.LongTensor], src_tokens2 = None):
+    def _build_sample(self, src_tokens: List[torch.LongTensor]):
         # assert torch.is_tensor(src_tokens)
-        if src_tokens2 == None:
-            dataset = self.task.build_dataset_for_inference(
-                src_tokens,
-                [x.numel() for x in src_tokens],
-            )
-        else:
-            dataset = self.task.build_dataset_for_inference(
-                src_tokens,
-                [x.numel() for x in src_tokens],
-                src_tokens2,
-                [x.numel() for x in src_tokens2],
-            )
-        #print(self.device)
+        dataset = self.task.build_dataset_for_inference(
+            src_tokens,
+            [x.numel() for x in src_tokens],
+        )
         sample = dataset.collater(dataset)
         sample = utils.apply_to_sample(
             lambda tensor: tensor.to(self.device),
@@ -122,26 +102,13 @@ class BARTHubInterface(nn.Module):
         )
         return sample
 
-    def sample(self, sentences: List[str], sentences2 = None, beam: int = 1, verbose: bool = False, balance = False, **kwargs) -> str:
+    def sample(self, sentences: List[str], beam: int = 1, verbose: bool = False, **kwargs) -> str:
         input = [self.encode(sentence) for sentence in sentences]
-        
-        #print(input)
-
-        if sentences2 is not None:
-            input2  = [self.encode(sentence2) for sentence2 in sentences2]
-
-            hypos = self.generate(input, beam, verbose, tokens2 = input2, balance = balance, **kwargs)
-        
-        else:
-            hypos = self.generate(input, beam, verbose, **kwargs)
-
-
+        hypos = self.generate(input, beam, verbose, **kwargs)
         return [self.decode(x['tokens']) for x in hypos]
 
-    def generate(self, tokens: List[torch.LongTensor], beam: int = 5, verbose: bool = False, tokens2 = None, balance = False, **kwargs) -> torch.LongTensor:
-        
-        
-        sample = self._build_sample(tokens, tokens2)
+    def generate(self, tokens: List[torch.LongTensor], beam: int = 5, verbose: bool = False, **kwargs) -> torch.LongTensor:
+        sample = self._build_sample(tokens)
 
         # build generator using current args as well as any kwargs
         gen_args = copy.copy(self.args)
@@ -154,7 +121,6 @@ class BARTHubInterface(nn.Module):
             [self.model],
             sample,
             prefix_tokens=sample['net_input']['src_tokens'].new_zeros((len(tokens), 1)).fill_(self.task.source_dictionary.bos()),
-            balance = balance,
         )
 
         if verbose:

@@ -22,7 +22,6 @@ def collate(
         return {}
 
     def merge(key, left_pad, move_eos_to_beginning=False):
-        #print(key)
         return data_utils.collate_tokens(
             [s[key] for s in samples],
             pad_idx, eos_idx, left_pad, move_eos_to_beginning,
@@ -50,9 +49,6 @@ def collate(
         align_weights = align_tgt_c[align_tgt_i[np.arange(len(align_tgt))]]
         return 1. / align_weights.float()
 
-
-    #print("!!!!", samples[0])
-
     id = torch.LongTensor([s['id'] for s in samples])
     src_tokens = merge('source', left_pad=left_pad_source)
     # sort by descending source length
@@ -61,24 +57,8 @@ def collate(
     id = id.index_select(0, sort_order)
     src_tokens = src_tokens.index_select(0, sort_order)
 
-
-    if samples[0].get('source2', None) is not None:
-        src2_tokens = merge('source2', left_pad=left_pad_source)
-        src2_tokens = src2_tokens.index_select(0, sort_order)
-        src2_lengths = torch.LongTensor([s['source2'].numel() for s in samples]).index_select(0, sort_order)
-        
-
-    #print(sort_order[:10])
-    #print(sort_order2[:10])
     prev_output_tokens = None
     target = None
-
-    #print("!!!!", samples[0])
-
-    #print("??????")
-    #print(src_tokens[0])
-    #print(src2_tokens[0])
-
     if samples[0].get('target', None) is not None:
         target = merge('target', left_pad=left_pad_target)
         target = target.index_select(0, sort_order)
@@ -94,42 +74,23 @@ def collate(
                 move_eos_to_beginning=True,
             )
             prev_output_tokens = prev_output_tokens.index_select(0, sort_order)
-    else: 
+    else:
         ntokens = sum(len(s['source']) for s in samples)
 
-    if samples[0].get('source2', None) is not None:
-        batch = {
-            'id': id,
-            'nsentences': len(samples),
-            'ntokens': ntokens,
-            'net_input': {
-                'src_tokens': src_tokens,
-                'src_lengths': src_lengths,
-                'src2_tokens':src2_tokens,
-                'src2_lengths':src2_lengths
-            },
-            'target': target,
-        }
-    else:
-
-        batch = {
-            'id': id,
-            'nsentences': len(samples),
-            'ntokens': ntokens,
-            'net_input': {
-                'src_tokens': src_tokens,
-                'src_lengths': src_lengths,
-            },
-            'target': target,
-        }
-
+    batch = {
+        'id': id,
+        'nsentences': len(samples),
+        'ntokens': ntokens,
+        'net_input': {
+            'src_tokens': src_tokens,
+            'src_lengths': src_lengths,
+        },
+        'target': target,
+    }
     if prev_output_tokens is not None:
         batch['net_input']['prev_output_tokens'] = prev_output_tokens
 
     if samples[0].get('alignment', None) is not None:
-
-        #print("??????")
-
         bsz, tgt_sz = batch['target'].shape
         src_sz = batch['net_input']['src_tokens'].shape[1]
 
@@ -193,7 +154,6 @@ class LanguagePairDataset(FairseqDataset):
     def __init__(
         self, src, src_sizes, src_dict,
         tgt=None, tgt_sizes=None, tgt_dict=None,
-        src2 = None, src2_sizes = None,
         left_pad_source=True, left_pad_target=False,
         max_source_positions=1024, max_target_positions=1024,
         shuffle=True, input_feeding=True,
@@ -206,10 +166,6 @@ class LanguagePairDataset(FairseqDataset):
             assert src_dict.eos() == tgt_dict.eos()
             assert src_dict.unk() == tgt_dict.unk()
         self.src = src
-
-        self.src2 = src2
-        self.src_sizes2 = src2_sizes
-
         self.tgt = tgt
         self.src_sizes = np.array(src_sizes)
         self.tgt_sizes = np.array(tgt_sizes) if tgt_sizes is not None else None
@@ -231,10 +187,6 @@ class LanguagePairDataset(FairseqDataset):
     def __getitem__(self, index):
         tgt_item = self.tgt[index] if self.tgt is not None else None
         src_item = self.src[index]
-
-
-        src2_item = self.src2[index] if self.src2 is not None else None
-
         # Append EOS to end of tgt sentence if it does not have an EOS and remove
         # EOS from end of src sentence if it exists. This is useful when we use
         # use existing datasets for opposite directions i.e., when we want to
@@ -253,35 +205,18 @@ class LanguagePairDataset(FairseqDataset):
             if self.src[index][-1] != bos:
                 src_item = torch.cat([torch.LongTensor([bos]), self.src[index]])
 
-            if self.src2 and self.src2[index][-1] != bos:
-                src2_item = torch.cat([torch.LongTensor([bos]), self.src2[index]])
-
-
         if self.remove_eos_from_source:
             eos = self.src_dict.eos()
             if self.src[index][-1] == eos:
                 src_item = self.src[index][:-1]
-            
-            if self.src2 and self.src2[index][-2] == eos:
-                src2_item = self.src2[index][:-1]
 
-        if self.src2:
-            example = {
-                'id': index,
-                'source': src_item,
-                'source2': src2_item,
-                'target': tgt_item,
-            }
-        else:
-            example = {
-                'id': index,
-                'source': src_item,
-                'target': tgt_item,
-            }
-
+        example = {
+            'id': index,
+            'source': src_item,
+            'target': tgt_item,
+        }
         if self.align_dataset is not None:
             example['alignment'] = self.align_dataset[index]
-
         return example
 
     def __len__(self):

@@ -6,7 +6,6 @@
 import math
 
 from fairseq import metrics, utils
-import torch
 from fairseq.criterions import FairseqCriterion, register_criterion
 
 
@@ -38,8 +37,6 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         super().__init__(args, task)
         self.eps = args.label_smoothing
 
-        self.args = args
-
     @staticmethod
     def add_args(parser):
         """Add criterion-specific arguments to the parser."""
@@ -56,50 +53,13 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         2) the sample size, which is used as the denominator for the gradient
         3) logging outputs to display while training
         """
-
-        #print("Here!!!!")
-        #print(sample['net_input']['src_tokens'].shape)
-        #print(sample['net_input']['src_tokens'][0])
-        #print(sample['net_input']['src_tokens'][1])
-        #print(sample['net_input']['src_lengths'])
-        #print(sample['net_input']['src2_tokens'].shape)
-        #print(sample['net_input']['src2_tokens'][0])
-        #print(sample['net_input']['src2_tokens'][1])
-        #print(sample['net_input']['src2_lengths'])
-        #print(sample['target'][0])
-
-        #print(self.args.multi_views)
-        net_output = model(**sample['net_input'], balance = self.args.balance)
-        
-        #print("!!!!!", net_output[0].shape)
-
+        net_output = model(**sample['net_input'])
         loss, nll_loss = self.compute_loss(model, net_output, sample, reduce=reduce)
-        
-        # adding entropy maximization loss here to try
-        balance_weight = net_output[1]['original_balance_weight']
-        #print('orignal, ', balance_weight)
-        #print('after sharpen, ', net_output[1]['balance_weight'])
-        
-        #print(balance_weight)
-
-        #extra_loss = None
-
-        #print('before', loss)
-        if balance_weight is not None:
-            #print(balance_weight.shape)
-            entra_loss = torch.mean(torch.clamp(torch.sum(-balance_weight * balance_weight.log(), dim=1) - 0.69, min=0))
-            #print("Here!!!")
-            #print("extra_loss", entra_loss)
-            loss = loss + 0.01 * entra_loss
-        
-       
-
         sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
         logging_output = {
             'loss': utils.item(loss.data) if reduce else loss.data,
             'nll_loss': utils.item(nll_loss.data) if reduce else nll_loss.data,
             'ntokens': sample['ntokens'],
-            
             'nsentences': sample['target'].size(0),
             'sample_size': sample_size,
         }
@@ -112,11 +72,6 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         loss, nll_loss = label_smoothed_nll_loss(
             lprobs, target, self.eps, ignore_index=self.padding_idx, reduce=reduce,
         )
-
-
-
-
-
         return loss, nll_loss
 
     @staticmethod

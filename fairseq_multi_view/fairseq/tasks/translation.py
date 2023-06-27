@@ -39,7 +39,7 @@ def load_langpair_dataset(
     combine, dataset_impl, upsample_primary,
     left_pad_source, left_pad_target, max_source_positions,
     max_target_positions, prepend_bos=False, load_alignments=False,
-    truncate_source=False, multi_views = False,
+    truncate_source=False,
 ):
 
     def split_exists(split, src, tgt, lang, data_path):
@@ -49,24 +49,14 @@ def load_langpair_dataset(
     src_datasets = []
     tgt_datasets = []
 
-    src2_datasets = []
-
-    
-
     for k in itertools.count():
         split_k = split + (str(k) if k > 0 else '')
 
         # infer langcode
         if split_exists(split_k, src, tgt, src, data_path):
             prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, src, tgt))
-            if multi_views:
-                prefix2 = os.path.join(data_path[:-2], '{}.{}-{}.'.format(split_k, src, tgt))
-
         elif split_exists(split_k, tgt, src, src, data_path):
             prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, tgt, src))
-            if multi_views:
-                prefix2 = os.path.join(data_path[:-2], '{}.{}-{}.'.format(split_k, tgt, src))
-
         else:
             if k > 0:
                 break
@@ -74,11 +64,6 @@ def load_langpair_dataset(
                 raise FileNotFoundError('Dataset not found: {} ({})'.format(split, data_path))
 
         src_dataset = data_utils.load_indexed_dataset(prefix + src, src_dict, dataset_impl)
-        
-        if multi_views:
-            src_dataset2 = data_utils.load_indexed_dataset(prefix2 + src, src_dict, dataset_impl)
-
-
         if truncate_source:
             src_dataset = AppendTokenDataset(
                 TruncateDataset(
@@ -87,20 +72,7 @@ def load_langpair_dataset(
                 ),
                 src_dict.eos(),
             )
-            if multi_views:
-                src_dataset2 = AppendTokenDataset(
-                    TruncateDataset(
-                        StripTokenDataset(src_dataset2, src_dict.eos()),
-                        max_source_positions - 1,
-                    ),
-                    src_dict.eos(),
-                )
-
         src_datasets.append(src_dataset)
-        
-        if multi_views:
-            src2_datasets.append(src_dataset2)
-
         tgt_datasets.append(
             data_utils.load_indexed_dataset(prefix + tgt, tgt_dict, dataset_impl)
         )
@@ -112,22 +84,10 @@ def load_langpair_dataset(
         if not combine:
             break
 
-
-    
     assert len(src_datasets) == len(tgt_datasets)
-
-    if multi_views:
-        assert len(src_datasets) == len(src2_datasets)
 
     if len(src_datasets) == 1:
         src_dataset, tgt_dataset = src_datasets[0], tgt_datasets[0]
-        
-        if multi_views:
-            src2_dataset =  src2_datasets[0]
-
-            print("!!!", len(src_dataset), len(src2_dataset))
-            #print("!!!", src_dataset[0], src2_dataset[0])
-
     else:
         sample_ratios = [1] * len(src_datasets)
         sample_ratios[0] = upsample_primary
@@ -137,10 +97,6 @@ def load_langpair_dataset(
     if prepend_bos:
         assert hasattr(src_dict, "bos_index") and hasattr(tgt_dict, "bos_index")
         src_dataset = PrependTokenDataset(src_dataset, src_dict.bos())
-
-        if multi_views:
-            src2_dataset = PrependTokenDataset(src2_dataset, src_dict.bos())
-
         tgt_dataset = PrependTokenDataset(tgt_dataset, tgt_dict.bos())
 
     align_dataset = None
@@ -149,30 +105,15 @@ def load_langpair_dataset(
         if indexed_dataset.dataset_exists(align_path, impl=dataset_impl):
             align_dataset = data_utils.load_indexed_dataset(align_path, None, dataset_impl)
 
-    if multi_views:
-        return LanguagePairDataset(
-            src_dataset, src_dataset.sizes, src_dict,
-            tgt_dataset, tgt_dataset.sizes, tgt_dict,
-            
-            src2 = src2_dataset,
-
-            left_pad_source=left_pad_source,
-            left_pad_target=left_pad_target,
-            max_source_positions=max_source_positions,
-            max_target_positions=max_target_positions,
-            align_dataset=align_dataset,
-        )
-    else:
-         return LanguagePairDataset(
-            src_dataset, src_dataset.sizes, src_dict,
-            tgt_dataset, tgt_dataset.sizes, tgt_dict,
-            left_pad_source=left_pad_source,
-            left_pad_target=left_pad_target,
-            max_source_positions=max_source_positions,
-            max_target_positions=max_target_positions,
-            align_dataset=align_dataset,
-        )
-
+    return LanguagePairDataset(
+        src_dataset, src_dataset.sizes, src_dict,
+        tgt_dataset, tgt_dataset.sizes, tgt_dict,
+        left_pad_source=left_pad_source,
+        left_pad_target=left_pad_target,
+        max_source_positions=max_source_positions,
+        max_target_positions=max_target_positions,
+        align_dataset=align_dataset,
+    )
 
 
 @register_task('translation')
@@ -241,18 +182,12 @@ class TranslationTask(FairseqTask):
                                  'e.g., \'{"beam": 4, "lenpen": 0.6}\'')
         parser.add_argument('--eval-bleu-print-samples', action='store_true',
                             help='print sample generations during validation')
-
-        
         # fmt: on
 
     def __init__(self, args, src_dict, tgt_dict):
         super().__init__(args)
         self.src_dict = src_dict
         self.tgt_dict = tgt_dict
-
-        #TODO:
-        #print('!!!!! multi-views:', args.multi_views)
-        self.multi_views = args.multi_views
 
     @classmethod
     def setup_task(cls, args, **kwargs):
@@ -278,7 +213,6 @@ class TranslationTask(FairseqTask):
         assert src_dict.pad() == tgt_dict.pad()
         assert src_dict.eos() == tgt_dict.eos()
         assert src_dict.unk() == tgt_dict.unk()
-        
         logger.info('[{}] dictionary: {} types'.format(args.source_lang, len(src_dict)))
         logger.info('[{}] dictionary: {} types'.format(args.target_lang, len(tgt_dict)))
 
@@ -297,8 +231,6 @@ class TranslationTask(FairseqTask):
         # infer langcode
         src, tgt = self.args.source_lang, self.args.target_lang
 
-
-
         self.datasets[split] = load_langpair_dataset(
             data_path, split, src, self.src_dict, tgt, self.tgt_dict,
             combine=combine, dataset_impl=self.args.dataset_impl,
@@ -309,11 +241,10 @@ class TranslationTask(FairseqTask):
             max_target_positions=self.args.max_target_positions,
             load_alignments=self.args.load_alignments,
             truncate_source=self.args.truncate_source,
-            multi_views = self.multi_views,
         )
 
-    def build_dataset_for_inference(self, src_tokens, src_lengths, src_tokens2 = None, src_length2 = None):
-        return LanguagePairDataset(src_tokens, src_lengths, self.source_dictionary, src2 = src_tokens2, src2_sizes = src_lengths)
+    def build_dataset_for_inference(self, src_tokens, src_lengths):
+        return LanguagePairDataset(src_tokens, src_lengths, self.source_dictionary)
 
     def build_model(self, args):
         if getattr(args, 'eval_bleu', False):
@@ -334,7 +265,6 @@ class TranslationTask(FairseqTask):
 
     def valid_step(self, sample, model, criterion):
         loss, sample_size, logging_output = super().valid_step(sample, model, criterion)
-        
         if self.args.eval_bleu:
             bleu = self._inference_with_bleu(self.sequence_generator, sample, model)
             logging_output['_bleu_sys_len'] = bleu.sys_len

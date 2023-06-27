@@ -93,7 +93,7 @@ class TransformerEncoderLayer(nn.Module):
         # will become -inf, which results in NaN in model parameters
         # TODO: to formally solve this problem, we need to change fairseq's
         # MultiheadAttention. We will do this later on.
-        x, _, _ = self.self_attn(
+        x, _ = self.self_attn(
             query=x, key=x, value=x, key_padding_mask=encoder_padding_mask
         )
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -198,9 +198,6 @@ class TransformerDecoderLayer(nn.Module):
         self_attn_padding_mask: Optional[torch.Tensor] = None,
         need_attn: bool = False,
         need_head_weights: bool = False,
-        encoder_out2 = None,
-        balance_weight = None,
-        encoder_padding_mask2 = None,
     ):
         """
         Args:
@@ -215,11 +212,6 @@ class TransformerDecoderLayer(nn.Module):
         Returns:
             encoded output of shape `(seq_len, batch, embed_dim)`
         """
-        #print(encoder_out2)
-        #print(balance_weight)
-
-        attn2 = None
-
         if need_head_weights:
             need_attn = True
 
@@ -227,7 +219,6 @@ class TransformerDecoderLayer(nn.Module):
         if self.normalize_before:
             x = self.self_attn_layer_norm(x)
         if prev_self_attn_state is not None:
-            print("prev_self_attn_state not None")
             prev_key, prev_value = prev_self_attn_state[:2]
             saved_state: Dict[str, Optional[Tensor]] = {
                 "prev_key": prev_key,
@@ -237,10 +228,7 @@ class TransformerDecoderLayer(nn.Module):
                 saved_state["prev_key_padding_mask"] = prev_self_attn_state[2]
             assert incremental_state is not None
             self.self_attn._set_input_buffer(incremental_state, saved_state)
-        
-        
         _self_attn_input_buffer = self.self_attn._get_input_buffer(incremental_state)
-        
         if self.cross_self_attention and not (
             incremental_state is not None
             and _self_attn_input_buffer is not None
@@ -262,17 +250,10 @@ class TransformerDecoderLayer(nn.Module):
                 )
             assert encoder_out is not None
             y = torch.cat((encoder_out, x), dim=0)
-
-            #print("Here cross self")
         else:
-            #print("Here not cross self")
             y = x
 
-        #print("self_attn")
-
-        #print('input x', x)
-        
-        x, attn, _ = self.self_attn(
+        x, attn = self.self_attn(
             query=x,
             key=y,
             value=y,
@@ -281,27 +262,16 @@ class TransformerDecoderLayer(nn.Module):
             need_weights=False,
             attn_mask=self_attn_mask,
         )
-        #print("end self_attn")
-        
-
         x = F.dropout(x, p=self.dropout, training=self.training)
         x = residual + x
         if not self.normalize_before:
             x = self.self_attn_layer_norm(x)
 
-
-        #print('output x', x)
-        
         if self.encoder_attn is not None:
-            #print("Not None")
             residual = x
             if self.normalize_before:
                 x = self.encoder_attn_layer_norm(x)
-            
             if prev_attn_state is not None:
-
-                #print("prev_attn_state not None")
-
                 prev_key, prev_value = prev_attn_state[:2]
                 saved_state: Dict[str, Optional[Tensor]] = {
                     "prev_key": prev_key,
@@ -311,115 +281,17 @@ class TransformerDecoderLayer(nn.Module):
                     saved_state["prev_key_padding_mask"] = prev_attn_state[2]
                 assert incremental_state is not None
                 self.encoder_attn._set_input_buffer(incremental_state, saved_state)
-            
-            
-            #TODO: CJA
-            
-            #print("------", encoder_out.shape, x.shape)
 
-            #print('input', x)
-            #print('encoder_out', encoder_out)
-
-            if encoder_out2 is not None:
-                if balance_weight is not None:
-                    #print("need_head_weights", need_head_weights)
-                    #print("Incremental_state: ",incremental_state )
-                    if need_head_weights:
-                        
-                        x, attn, attn2 = self.encoder_attn(
-                            query=x,
-                            key=encoder_out,
-                            value=encoder_out,
-                            
-                            key2 = encoder_out2,
-                            value2 = encoder_out2,
-
-
-                            balance_weight = balance_weight,
-
-                            key_padding_mask=encoder_padding_mask,
-
-                            key_padding_mask2=encoder_padding_mask2,
-
-                            incremental_state=incremental_state,
-
-                            static_kv=True,
-                            need_weights=need_attn or (not self.training and self.need_attn),
-                            need_head_weights=need_head_weights,
-                        )
-                        #print('output', x)
-
-                    else:
-
-                        #print('here')
-                        #print('incremental_state', incremental_state)
-
-                        x, attn, _ = self.encoder_attn(
-                            query=x,
-                            key=encoder_out,
-                            value=encoder_out,
-                            
-                            key2 = encoder_out2,
-                            value2 = encoder_out2,
-
-
-                            balance_weight = balance_weight,
-
-                            key_padding_mask=encoder_padding_mask,
-
-                            key_padding_mask2=encoder_padding_mask2,
-
-                            incremental_state=incremental_state,
-
-                            static_kv=True,
-                            need_weights=need_attn or (not self.training and self.need_attn),
-                            need_head_weights=need_head_weights,
-                        )
-
-                else:
-
-                    #print("Incremental_state: ",incremental_state )
-
-                    #print(encoder_out.shape)
-                    #print(encoder_out2.shape)
-
-
-                    concat_out = torch.cat([encoder_out, encoder_out2], dim = 0)
-                    #print(".......")
-                    #print(encoder_out.shape, encoder_out2.shape)
-                    #print(concat_out.shape)
-                    #print("1: ", encoder_padding_mask.shape)
-                    #print("2: ",encoder_padding_mask2.shape)
-
-                    encoder_padding = torch.cat([encoder_padding_mask, encoder_padding_mask2], dim = 1)
-                    #print(encoder_padding_mask[0], encoder_padding_mask2[0])
-                    #print(encoder_padding.shape)
-
-                    x, attn, _ = self.encoder_attn(
-                    query=x,
-                    key=concat_out,
-                    value=concat_out,
-                    key_padding_mask=encoder_padding,
-                    incremental_state=incremental_state,
-                    static_kv=True,
-                    need_weights=need_attn or (not self.training and self.need_attn),
-                    need_head_weights=need_head_weights,
-                )
-            
-            else:
-                x, attn, _ = self.encoder_attn(
-                    query=x,
-                    key=encoder_out,
-                    value=encoder_out,
-                    key_padding_mask=encoder_padding_mask,
-                    incremental_state=incremental_state,
-                    static_kv=True,
-                    need_weights=need_attn or (not self.training and self.need_attn),
-                    need_head_weights=need_head_weights,
-                )
-
-                #print("!!!!!!!", x.shape)
-
+            x, attn = self.encoder_attn(
+                query=x,
+                key=encoder_out,
+                value=encoder_out,
+                key_padding_mask=encoder_padding_mask,
+                incremental_state=incremental_state,
+                static_kv=True,
+                need_weights=need_attn or (not self.training and self.need_attn),
+                need_head_weights=need_head_weights,
+            )
             x = F.dropout(x, p=self.dropout, training=self.training)
             x = residual + x
             if not self.normalize_before:
@@ -435,11 +307,7 @@ class TransformerDecoderLayer(nn.Module):
         x = residual + x
         if not self.normalize_before:
             x = self.final_layer_norm(x)
-        
         if self.onnx_trace and incremental_state is not None:
-            
-            
-
             saved_state = self.self_attn._get_input_buffer(incremental_state)
             assert saved_state is not None
             if self_attn_padding_mask is not None:
@@ -449,21 +317,12 @@ class TransformerDecoderLayer(nn.Module):
                     saved_state["prev_key_padding_mask"],
                 ]
             else:
-
-                #print("here")
-
                 self_attn_state = [saved_state["prev_key"], saved_state["prev_value"]]
             return x, attn, self_attn_state
-        
-        if attn2 is not None:
-            return x, attn, attn2
-        else:
-            return x, attn, None
+        return x, attn, None
 
     def make_generation_fast_(self, need_attn: bool = False, **kwargs):
         self.need_attn = need_attn
-
-    
 
 
 def Linear(in_features, out_features, bias=True):

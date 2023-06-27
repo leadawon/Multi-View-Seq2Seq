@@ -33,7 +33,7 @@ class FairseqIncrementalDecoder(FairseqDecoder):
     def __init__(self, dictionary):
         super().__init__(dictionary)
 
-    def forward(self, prev_output_tokens, encoder_out=None, encoder_out2 = None, incremental_state=None, **kwargs):
+    def forward(self, prev_output_tokens, encoder_out=None, incremental_state=None, **kwargs):
         """
         Args:
             prev_output_tokens (LongTensor): shifted output tokens of shape
