@@ -14,6 +14,7 @@ import math
 import os
 import sys
 from typing import Any, Dict, List
+from rouge import Rouge, FilesRouge
 
 import torch
 
@@ -102,18 +103,108 @@ class Trainer(object):
         return self._optimizer
 
     @property
+    def optimizer2(self):
+        #if self._optimizer2 is None:
+        #    self._build_optimizer()
+        return self._optimizer2
+
+    @property
     def lr_scheduler(self):
         if self._lr_scheduler is None:
             self._build_optimizer()  # this will initialize self._lr_scheduler
         return self._lr_scheduler
 
     def _build_optimizer(self):
-        params = list(
-            filter(
-                lambda p: p.requires_grad,
-                chain(self.model.parameters(), self.criterion.parameters()),
+        #if not self.args.balance:
+        '''
+        count = 1
+        for name, param in chain(self.model.encoder.named_parameters(), self.model.decoder.named_parameters(), self.criterion.named_parameters()):
+            if param.requires_grad:
+                print(count, name)
+                count += 1
+
+        print("------")
+        for name, param in chain(self.model.section_positions.named_parameters(), self.model.section_layernorm_embedding.named_parameters(), self.model.section.named_parameters(),
+                self.model.w_context_vector.named_parameters(), self.model.w_proj.named_parameters()):
+            if param.requires_grad:
+                print(count, name)
+                count += 1
+        '''
+        
+        #print(len(self.model.named_parameters()))
+        #print(list(
+        #   filter(
+        #        lambda p: p.requires_grad,
+        #       chain(self.model.encoder.parameters(), self.model.decoder.parameters()),
+        #    )
+        #))
+
+        #params = list(
+        #    filter(
+        #        lambda p: p.requires_grad,
+        #        chain(self.model.parameters(), self.criterion.parameters()),
+        #    )
+        #)
+        
+        #print("Total: ")
+        #print(len(params))
+
+        
+        '''
+        base_params = list(map(id, chain(self.model.encoder.parameters(), self.model.decoder.parameters())))
+        logits_params = filter(lambda p: id(p) not in base_params and p.requires_grad, self.model.parameters())
+
+        base_params_id = list(map(id, self.model.section_positions.parameters())) + list(map(id,net.bn1.parameters()))+\
+	list(map(id,net.layer1.parameters())) + list(map(id,net.layer2.parameters())) \
+		+ list(map(id,net.layer3.parameters())) + list(map(id,net.layer4.parameters()))
+
+        new_params = filter(lambda p: id(p) not in base_params_id , net.parameters())
+        base_params = filter(lambda p: id(p) in base_params_id, net.parameters())
+
+        
+        
+        '''
+        new_params_id = list(map(id, self.model.section_positions.parameters())) + list(map(id,self.model.section_layernorm_embedding.parameters()))+\
+	list(map(id,self.model.section.parameters())) + list(map(id, self.model.w_proj.parameters())) \
+		+ list(map(id,self.model.w_context_vector.parameters())) + list(map(id,self.model.w_proj_layer_norm.parameters()))
+
+        base_params = list(filter(lambda p: id(p) not in new_params_id and p.requires_grad , self.model.parameters()))
+
+        print("group1: ")
+        print(len(base_params))
+        
+        new_params = list(filter(lambda p: id(p) in new_params_id and p.requires_grad, self.model.parameters()))
+        print("group2: ")
+        print(len(new_params))
+
+        params = [
+            {"params": base_params},
+            {"params": new_params},
+        ]
+        # "weight_decay": 0.01
+        
+        
+
+        params2 = None
+
+        '''
+        if self.args.balance:
+            params = list(
+                filter(
+                    lambda p: p.requires_grad,
+                    chain(self.model.encoder.parameters(), self.model.decoder.parameters(), self.criterion.parameters()),
+                )
             )
-        )
+
+            params2 = list(
+                filter(
+                    lambda p: p.requires_grad,
+                    chain(self.model.w_proj.parameters(), self.model.w_context_vector.parameters(), self.model.section_positions.parameters(), 
+                    self.model.section_layernorm_embedding.parameters()),
+                )
+            )
+        '''
+
 
         if self.args.fp16:
             if self.cuda and torch.cuda.get_device_capability(0)[0] < 7:
@@ -131,13 +222,18 @@ class Trainer(object):
             if self.cuda and torch.cuda.get_device_capability(0)[0] >= 7:
                 logger.info("NOTE: your device may support faster training with --fp16")
             self._optimizer = optim.build_optimizer(self.args, params)
+            
+            self._optimizer2 = None
+            if self.args.balance and params2 is not None:
+                self._optimizer2 = optim.build_optimizer(self.args, params2)
+
 
         if self.args.use_bmuf:
             self._optimizer = optim.FairseqBMUF(self.args, self._optimizer)
 
         # We should initialize the learning rate scheduler immediately after
         # building the optimizer, so that the initial learning rate is set.
-        self._lr_scheduler = lr_scheduler.build_lr_scheduler(self.args, self.optimizer)
+        self._lr_scheduler = lr_scheduler.build_lr_scheduler(self.args, self.optimizer, self._optimizer2)
         self._lr_scheduler.step_update(0)
 
     def save_checkpoint(self, filename, extra_state):
@@ -169,13 +265,31 @@ class Trainer(object):
 
         bexists = PathManager.isfile(filename)
         if bexists:
+
             state = checkpoint_utils.load_checkpoint_to_cpu(filename)
 
+            
+            model_dict =  self._model.state_dict()
+            
+            #state_dict = {k:v for k,v in state['model'].items() if k in model_dict.keys()}
+
+            pre_trained_dict = state["model"]
+
+            for (u, v) in model_dict.items():
+                if u not in pre_trained_dict:
+                    pre_trained_dict[u] = v
+    
             # load model parameters
             try:
                 self.get_model().load_state_dict(
-                    state["model"], strict=True, args=self.args
+                    pre_trained_dict, strict=True, args=self.args
                 )
+
+                #self.get_model().load_state_dict(
+                #    state["model"], strict=True, args=self.args
+                #)
+
+
                 if utils.has_parameters(self.get_criterion()):
                     self.get_criterion().load_state_dict(
                         state["criterion"], strict=True
@@ -284,6 +398,8 @@ class Trainer(object):
         logging_outputs, sample_size, ooms = [], 0, 0
         for i, sample in enumerate(samples):
             sample = self._prepare_sample(sample)
+            
+
             if sample is None:
                 # when sample is None, run forward/backward on a dummy batch
                 # and ignore the resulting gradients
@@ -362,11 +478,18 @@ class Trainer(object):
                     # already normalizes by the number of GPUs. Thus we get
                     # (sum_of_gradients / sample_size).
                     self.optimizer.multiply_grads(self.args.distributed_world_size / sample_size)
+                    if self.optimizer2 is not None:
+                        self.optimizer2.multiply_grads(self.args.distributed_world_size / sample_size)
+
                 else:
                     self.optimizer.multiply_grads(1 / sample_size)
+                    if self.optimizer2 is not None:
+                        self.optimizer2.multiply_grads(1 / sample_size)
 
             # clip grads
             grad_norm = self.optimizer.clip_grad_norm(self.args.clip_norm)
+            if self.optimizer2 is not None:
+                grad_norm = self.optimizer2.clip_grad_norm(self.args.clip_norm)
 
             # check that grad norms are consistent across workers
             if not self.args.use_bmuf:
@@ -374,6 +497,9 @@ class Trainer(object):
 
             # take an optimization step
             self.optimizer.step()
+            if self.optimizer2 is not None:
+                self.optimizer2.step()
+
             self.set_num_updates(self.get_num_updates() + 1)
 
             # task specific update per step
@@ -578,6 +704,8 @@ class Trainer(object):
         # Set seed based on args.seed and the update number so that we get
         # reproducible results when resuming from checkpoints
         seed = self.args.seed + self.get_num_updates()
+
+        #print("seed: ", seed)
         torch.manual_seed(seed)
         if self.cuda:
             torch.cuda.manual_seed(seed)

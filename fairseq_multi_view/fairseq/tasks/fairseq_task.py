@@ -304,9 +304,9 @@ class FairseqTask(object):
             loss, sample_size, logging_output = criterion(model, sample)
         return loss, sample_size, logging_output
 
-    def inference_step(self, generator, models, sample, prefix_tokens=None):
+    def inference_step(self, generator, models, sample, prefix_tokens=None, balance = False):
         with torch.no_grad():
-            return generator.generate(models, sample, prefix_tokens=prefix_tokens)
+            return generator.generate(models, sample, balance = balance, prefix_tokens=prefix_tokens)
 
     def begin_epoch(self, epoch, model):
         """Hook function called before the start of each epoch."""

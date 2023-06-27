@@ -198,7 +198,7 @@ def get_parser(desc, default_task="translation"):
     parser.add_argument('--tensorboard-logdir', metavar='DIR', default='',
                         help='path to save logs for tensorboard, should match --logdir '
                              'of running tensorboard (default: no tensorboard logging)')
-    parser.add_argument('--seed', default=1, type=int, metavar='N',
+    parser.add_argument('--seed', default=14632, type=int, metavar='N',
                         help='pseudo random number generator seed')
     parser.add_argument('--cpu', action='store_true', help='use CPU instead of CUDA')
     parser.add_argument('--fp16', action='store_true', help='use FP16')
@@ -222,6 +222,19 @@ def get_parser(desc, default_task="translation"):
                         help='how often to clear the PyTorch CUDA cache (0 to disable)')
     parser.add_argument('--all-gather-list-size', default=16384, type=int,
                         help='number of bytes reserved for gathering stats from workers')
+
+    parser.add_argument("--multi-views",  action='store_true',
+                       help="Load Multi-views")
+
+    parser.add_argument("--balance",  action='store_true',
+                       help="balance between different views")
+
+    parser.add_argument("--lr-weight", default=1, type=float,
+                       help="learning weight for new components")
+
+
+    parser.add_argument("--T", default=1, type=float,
+                       help="Sharpen Temperature")
 
     from fairseq.registry import REGISTRIES
     for registry_name, REGISTRY in REGISTRIES.items():
@@ -282,6 +295,10 @@ def add_preprocess_args(parser):
                        help="Pad dictionary size to be multiple of N")
     group.add_argument("--workers", metavar="N", default=1, type=int,
                        help="number of parallel workers")
+
+    #TODO: Change here
+    #group.add_argument("--multi-views",  action='store_true',
+    #                   help="Load Multi-views")
     # fmt: on
     return parser
 

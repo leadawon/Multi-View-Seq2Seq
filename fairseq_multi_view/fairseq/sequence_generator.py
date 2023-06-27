@@ -11,6 +11,8 @@ from fairseq import search, utils
 from fairseq.data import data_utils
 from fairseq.models import FairseqIncrementalDecoder
 
+import pickle
+
 
 class SequenceGenerator(object):
     def __init__(
@@ -77,7 +79,7 @@ class SequenceGenerator(object):
 
 
     @torch.no_grad()
-    def generate(self, models, sample, **kwargs):
+    def generate(self, models, sample, balance = False, **kwargs):
         """Generate a batch of translations.
 
         Args:
@@ -89,7 +91,7 @@ class SequenceGenerator(object):
                 (default: self.eos)
         """
         model = EnsembleModel(models)
-        return self._generate(model, sample, **kwargs)
+        return self._generate(model, sample, balance = balance, **kwargs)
 
     @torch.no_grad()
     def _generate(
@@ -98,6 +100,7 @@ class SequenceGenerator(object):
         sample,
         prefix_tokens=None,
         bos_token=None,
+        balance = False,
         **kwargs
     ):
         if not self.retain_dropout:
@@ -113,9 +116,28 @@ class SequenceGenerator(object):
         src_tokens = encoder_input['src_tokens']
         src_lengths = (src_tokens.ne(self.eos) & src_tokens.ne(self.pad)).long().sum(dim=1)
         input_size = src_tokens.size()
+
+        if 'src2_tokens' in encoder_input:
+            src_tokens2 = encoder_input['src2_tokens']
+            src_lengths2 = (src_tokens2.ne(self.eos) & src_tokens2.ne(self.pad)).long().sum(dim=1)
+            input_size2 = src_tokens2.size()
+        else:
+            src_tokens2 = None
+            src_lengths2 = None
+            input_size2 = None
+
+        
+        
         # batch dimension goes first followed by source lengths
         bsz = input_size[0]
-        src_len = input_size[1]
+        if input_size2 is not None:
+            src_len = max(input_size[1], input_size2[1])
+        else:
+            src_len = input_size[1]
+
+        if 'src2_tokens' in encoder_input:
+            src_len2 = input_size2[1]
+
         beam_size = self.beam_size
 
         if self.match_source_len:
@@ -126,21 +148,66 @@ class SequenceGenerator(object):
                 # exclude the EOS marker
                 model.max_decoder_positions() - 1,
             )
+        
+        
+
         assert self.min_len <= max_len, 'min_len cannot be larger than max_len, please adjust these!'
 
         # compute the encoder output for each beam
-        encoder_outs = model.forward_encoder(encoder_input)
-        new_order = torch.arange(bsz).view(-1, 1).repeat(1, beam_size).view(-1)
-        new_order = new_order.to(src_tokens.device).long()
-        encoder_outs = model.reorder_encoder_out(encoder_outs, new_order)
+        encoder_out = model.forward_encoder(encoder_input, balance)
 
+        if encoder_out[1] == None:
+            encoder_outs = encoder_out[0]
+
+            new_order = torch.arange(bsz).view(-1, 1).repeat(1, beam_size).view(-1)
+            
+            new_order = new_order.to(src_tokens.device).long()
+            
+            encoder_outs = model.reorder_encoder_out(encoder_outs, new_order)
+            
+            encoder_outs2 = None
+            balance_weight = None
+
+        else:
+            new_order = torch.arange(bsz).view(-1, 1).repeat(1, beam_size).view(-1)
+            new_order = new_order.to(src_tokens.device).long()
+            
+            #print(new_order)
+            #print("....", encoder_out[0][0].encoder_out.shape)
+            encoder_outs = model.reorder_encoder_out(encoder_out[0], new_order)
+            #print("finished")
+            #print("????", encoder_out[1][0].encoder_out.shape)
+            encoder_outs2 = model.reorder_encoder_out(encoder_out[1], new_order)
+            
+            balance_weight = encoder_out[2]
+            if encoder_out[2] is None:
+                balance_weight = None
+            else:
+                #print(balance_weight)
+                balance_weight = balance_weight.index_select(0, new_order)
+                #print(balance_weight)
+        # TODO: Modify this
         # initialize buffers
+
+        #if encoder_out[1] is not None and encoder_outs[2] is None:
+        #    src_tokens = torch.cat([src_tokens, src_tokens2], dim = 1)
+        
+
         scores = src_tokens.new(bsz * beam_size, max_len + 1).float().fill_(0)
         scores_buf = scores.clone()
+        
         tokens = src_tokens.new(bsz * beam_size, max_len + 2).long().fill_(self.pad)
         tokens_buf = tokens.clone()
+        
+        #if encoder_out[2] is not None:
+        #    scores2 = src_tokens.new(bsz * beam_size, max_len + 1).float().fill_(0)
+        #    scores_buf2 = scores2.clone()
+            
         tokens[:, 0] = self.eos if bos_token is None else bos_token
+        
         attn, attn_buf = None, None
+
+        attn2, attn_buf2 = None, None
 
         # The blacklist indicates candidates that should be ignored.
         # For example, suppose we're sampling and have already finalized 2/5
@@ -268,12 +335,43 @@ class SequenceGenerator(object):
                     # update beam indices to take into account removed sentences
                     corr = batch_idxs - torch.arange(batch_idxs.numel()).type_as(batch_idxs)
                     reorder_state.view(-1, beam_size).add_(corr.unsqueeze(-1) * beam_size)
+                
+                #TODO:
                 model.reorder_incremental_state(reorder_state)
+                
+                #TODO:   
+                 
                 encoder_outs = model.reorder_encoder_out(encoder_outs, reorder_state)
+                  
+                if encoder_outs2 is not None:
+                    encoder_outs2 = model.reorder_encoder_out(encoder_outs2, reorder_state)
 
-            lprobs, avg_attn_scores = model.forward_decoder(
-                tokens[:, :step + 1], encoder_outs, temperature=self.temperature,
+                if balance_weight is not None:
+                    balance_weight = balance_weight.index_select(0, reorder_state)
+
+            if balance_weight is not None: 
+                #print(lprobs)
+                #print("out 0", encoder_outs[0].encoder_out)
+                #print("out 1", encoder_outs2[0].encoder_out)
+                #print(step)
+                
+                lprobs, avg_attn_scores, avg_attn_scores2, balance_weight = model.forward_decoder(
+                tokens[:, :step + 1], encoder_outs, temperature=self.temperature, encoder_outs2 = encoder_outs2, balance_weight = balance_weight,
             )
+                
+                #break
+
+            elif encoder_outs2 is not None:
+                lprobs, avg_attn_scores = model.forward_decoder(
+                    tokens[:, :step + 1], encoder_outs, temperature=self.temperature, encoder_outs2 = encoder_outs2, balance_weight = balance_weight,
+                )
+                avg_attn_scores2 = None
+            else:
+                lprobs, avg_attn_scores = model.forward_decoder(
+                    tokens[:, :step + 1], encoder_outs, temperature=self.temperature,
+                )
+                avg_attn_scores2 = None
+
             lprobs[lprobs != lprobs] = -math.inf
 
             lprobs[:, self.pad] = -math.inf  # never select pad
@@ -328,18 +426,38 @@ class SequenceGenerator(object):
             # Record attention scores
             if type(avg_attn_scores) is list:
                 avg_attn_scores = avg_attn_scores[0]
+            
+            if type(avg_attn_scores2) is list:
+                avg_attn_scores2 = avg_attn_scores2[0]
+
+            
             if avg_attn_scores is not None:
-                if attn is None:
-                    attn = scores.new(bsz * beam_size, src_tokens.size(1), max_len + 2)
-                    attn_buf = attn.clone()
-                attn[:, :, step + 1].copy_(avg_attn_scores)
+                if encoder_outs2 is None or balance_weight is not None:
+                    if attn is None:
+                        attn = scores.new(bsz * beam_size, src_tokens.size(1), max_len + 2)
+                        attn_buf = attn.clone()
+                    attn[:, :, step + 1].copy_(avg_attn_scores)
+                else:
+                    if attn is None:
+                        attn = scores.new(bsz * beam_size, src_tokens.size(1) + src_tokens2.size(1), max_len + 2)
+                        attn_buf = attn.clone()
+                    attn[:, :, step + 1].copy_(avg_attn_scores)
+
+            if avg_attn_scores2 is not None:
+                if attn2 is None:
+                    attn2 = scores.new(bsz * beam_size, src_tokens2.size(1), max_len + 2)
+                    attn_buf2 = attn2.clone()
+                attn2[:, :, step + 1].copy_(avg_attn_scores2)
 
             scores = scores.type_as(lprobs)
             scores_buf = scores_buf.type_as(lprobs)
+
+
             eos_bbsz_idx = buffer('eos_bbsz_idx')
             eos_scores = buffer('eos_scores', type_of=scores)
 
             self.search.set_src_lengths(src_lengths)
+
 
             if self.no_repeat_ngram_size > 0:
                 def calculate_banned_tokens(bbsz_idx):
@@ -420,6 +538,11 @@ class SequenceGenerator(object):
                 if attn is not None:
                     attn = attn.view(bsz, -1)[batch_idxs].view(new_bsz * beam_size, attn.size(1), -1)
                     attn_buf.resize_as_(attn)
+                
+                if attn2 is not None:
+                    attn2 = attn2.view(bsz, -1)[batch_idxs].view(new_bsz * beam_size, attn2.size(1), -1)
+                    attn_buf2.resize_as_(attn2)
+
                 bsz = new_bsz
             else:
                 batch_idxs = None
@@ -492,6 +615,9 @@ class SequenceGenerator(object):
             scores, scores_buf = scores_buf, scores
             if attn is not None:
                 attn, attn_buf = attn_buf, attn
+            
+            if attn2 is not None:
+                attn2, attn_buf2 = attn_buf2, attn2
 
             # reorder incremental state in decoder
             reorder_state = active_bbsz_idx
@@ -512,6 +638,11 @@ class EnsembleModel(torch.nn.Module):
         if all(hasattr(m, 'decoder') and isinstance(m.decoder, FairseqIncrementalDecoder) for m in models):
             self.incremental_states = {m: {} for m in models}
 
+
+        self.incremental_states2 = None
+        if all(hasattr(m, 'decoder') and isinstance(m.decoder, FairseqIncrementalDecoder) for m in models):
+            self.incremental_states2 = {m: {} for m in models}
+
     def has_encoder(self):
         return hasattr(self.models[0], 'encoder')
 
@@ -519,13 +650,104 @@ class EnsembleModel(torch.nn.Module):
         return min(m.max_decoder_positions() for m in self.models)
 
     @torch.no_grad()
-    def forward_encoder(self, encoder_input):
+    def forward_encoder(self, encoder_input, balance = False):
         if not self.has_encoder():
             return None
-        return [model.encoder(**encoder_input) for model in self.models]
+        if 'src2_tokens' not in encoder_input:
+            
+            return [model.encoder(**encoder_input) for model in self.models], None, None
+        else:
+
+            src_tokens = encoder_input['src_tokens']
+            src_lengths = encoder_input['src_lengths']
+            src2_tokens = encoder_input['src2_tokens']
+            src2_length = encoder_input['src2_lengths']
+
+            #print(src_lengths, src2_length)
+
+            encoder_out = self.models[0].encoder(src_tokens, src_lengths=src_lengths)
+            encoder_out2 = self.models[0].encoder(src2_tokens, src_lengths=src2_length)
+
+            sections, section_padding_mask, section_padding = self.models[0].section_extract(src_tokens, encoder_out.encoder_out)
+            
+            #sections = self.models[0].forward_section_embeddings(sections, section_padding)
+            #section_out = self.models[0].section(sections, src_key_padding_mask = section_padding_mask)
+            #section_out = sections
+            section_out, _ = self.models[0].section(sections)
+            
+            
+            sections2, section_padding_mask2, section_padding2 = self.models[0].section_extract(src2_tokens, encoder_out2.encoder_out)
+            
+            #sections2 = self.models[0].forward_section_embeddings(sections2, section_padding2)
+            #section_out2 = self.models[0].section(sections2, src_key_padding_mask = section_padding_mask2)
+            #section_out2 = sections2
+            section_out2, _ = self.models[0].section(sections2)
+
+            #print(balance)
+
+            if balance:
+                #eos_mask1 = src_tokens.eq(2)
+                #eos_mask2 = src2_tokens.eq(2)
+
+                #print(src_tokens)
+                #print(src2_tokens)
+
+                #src = encoder_out.encoder_out[-1, :].unsqueeze(1)
+                #src2 = encoder_out2.encoder_out[-1, :].unsqueeze(1)
+                
+                #src = torch.mean(section_out.transpose(1, 0), dim = 1).unsqueeze(1)
+                #src2 = torch.mean(section_out2.transpose(1, 0), dim = 1).unsqueeze(1)
+                src = section_out[-1, :].unsqueeze(1)
+                src2 = section_out2[-1, :].unsqueeze(1)
+                #src = torch.nn.functional.max_pool1d(section_out.transpose(1, 0).transpose(2,1), kernel_size = section_out.shape[1]).unsqueeze(-1)
+                #src2 = torch.nn.functional.max_pool1d(section_out2.transpose(1, 0).transpose(2,1), kernel_size = section_out2.shape[1]).unsqueeze(-1)
+
+                src_input = torch.cat([src, src2], dim = 1)
+                Hw = torch.tanh(self.models[0].w_proj_layer_norm(self.models[0].w_proj(src_input)))
+                #Hw = torch.tanh(self.models[0].w_proj(src_input))
+
+                #balance_weight = self.models[0].softmax(Hw.matmul(self.models[0].w_context_vector).squeeze(-1))
+                balance_weight = self.models[0].softmax(self.models[0].w_context_vector(Hw).squeeze(-1))
+
+                #print('before sharpen', balance_weight)
+
+                balance_weight = balance_weight **(1/self.models[0].args.T)
+                balance_weight = balance_weight/balance_weight.sum(dim = 1, keepdim = True)
+
+                #print("......")
+            else:
+                balance_weight = None
+
+            
+            #print(self.models[0].w_proj.weight)
+            #print(self.models[0].w_proj.bias)
+            #print("------")
+            #print("before tanh", self.models[0].w_proj(src_input))
+            #print("after layer norm", self.models[0].w_proj_layer_norm(self.models[0].w_proj(src_input)))
+            #print(Hw)
+            #print("-----")
+            #print(self.models[0].w_context_vector(Hw))
+
+            #print('0')
+            #print(sections)
+            #print(section_out)
+            #print(src)
+            
+           
+            #print('1')
+            #print(sections2)
+            #print(section_out2)
+            #print(src2)
+           
+            #print(balance_weight)
+
+            return ([encoder_out], [encoder_out2], balance_weight)
+
+            
+
 
     @torch.no_grad()
-    def forward_decoder(self, tokens, encoder_outs, temperature=1.):
+    def forward_decoder(self, tokens, encoder_outs, temperature=1., encoder_outs2 = None, balance_weight = None):
         if len(self.models) == 1:
             return self._decode_one(
                 tokens,
@@ -534,6 +756,9 @@ class EnsembleModel(torch.nn.Module):
                 self.incremental_states,
                 log_probs=True,
                 temperature=temperature,
+                encoder_outs2 = encoder_outs2[0] if encoder_outs2 is not None else None,
+                balance_weight = balance_weight,
+                incremental_states2 = self.incremental_states2
             )
 
         log_probs = []
@@ -560,27 +785,72 @@ class EnsembleModel(torch.nn.Module):
 
     def _decode_one(
         self, tokens, model, encoder_out, incremental_states, log_probs,
-        temperature=1.,
+        temperature=1., encoder_outs2 = None, balance_weight = None, incremental_states2 = None
     ):
         if self.incremental_states is not None:
+            #print("not None")
             decoder_out = list(model.forward_decoder(
-                tokens, encoder_out=encoder_out, incremental_state=self.incremental_states[model],
+                tokens, encoder_out=encoder_out, incremental_state=self.incremental_states[model], encoder_out2 = encoder_outs2, balance_weight = balance_weight, incremental_state2 = incremental_states2,
             ))
+
         else:
-            decoder_out = list(model.forward_decoder(tokens, encoder_out=encoder_out))
+            print('None')
+            decoder_out = list(model.forward_decoder(tokens, encoder_out=encoder_out, encoder_out2 = encoder_outs2, balance_weight = balance_weight,))
+
+           
+        
+        #print(decoder_out[0].shape)
+        #print(decoder_out2[0].shape)
+
         decoder_out[0] = decoder_out[0][:, -1:, :]
+
+        #print(decoder_out[0])
+
+        #print(decoder_out[0].shape)
+
         if temperature != 1.:
             decoder_out[0].div_(temperature)
+
+        
         attn = decoder_out[1]
+
+        #print(attn['attn2'])
+        #print(attn['balance_weight'])
+
         if type(attn) is dict:
+            attn2 = attn.get('attn2', None)
+            balance_weight = attn.get('balance_weight', None)
             attn = attn.get('attn', None)
+
+
         if type(attn) is list:
             attn = attn[0]
+
+        if type(attn2) is list:
+            attn2 = attn2[0]
+
+
         if attn is not None:
+            #print(attn.shape)
             attn = attn[:, -1, :]
+            #print(attn.shape)
+        
+        if attn2 is not None:
+            #print(attn2.shape)
+            attn2 = attn2[:, -1, :]
+
+        if balance_weight is not None:
+            #print(balance_weight.shape)
+            balance_weight = balance_weight
+        
+        #print(balance_weight[-1])
+        
         probs = model.get_normalized_probs(decoder_out, log_probs=log_probs)
         probs = probs[:, -1, :]
-        return probs, attn
+        if attn2 is not None:
+            return probs, attn, attn2, balance_weight
+        else:
+            return probs, attn
 
     def reorder_encoder_out(self, encoder_outs, new_order):
         if not self.has_encoder():
@@ -592,9 +862,14 @@ class EnsembleModel(torch.nn.Module):
 
     def reorder_incremental_state(self, new_order):
         if self.incremental_states is None:
+            print('None')
             return
+        
         for model in self.models:
             model.decoder.reorder_incremental_state(self.incremental_states[model], new_order)
+
+        for model in self.models:
+            model.decoder.reorder_incremental_state(self.incremental_states2[model], new_order)
 
 
 class SequenceGeneratorWithAlignment(SequenceGenerator):

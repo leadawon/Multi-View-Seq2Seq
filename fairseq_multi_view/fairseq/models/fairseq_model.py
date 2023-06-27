@@ -229,7 +229,38 @@ class FairseqEncoderDecoderModel(BaseFairseqModel):
         return decoder_out
 
     def forward_decoder(self, prev_output_tokens, **kwargs):
-        return self.decoder(prev_output_tokens, **kwargs)
+        
+        #print(prev_output_tokens)
+        #print(kwargs.keys())
+
+        #print('out 1', kwargs['encoder_out'].encoder_out)
+        #print(kwargs['incremental_state'])
+
+        x, extra = self.decoder(prev_output_tokens, encoder_out=kwargs['encoder_out'], incremental_state=kwargs['incremental_state'], encoder_out2 = kwargs['encoder_out2'], balance_weight = kwargs['balance_weight'])
+        #print(kwargs.keys())
+        #print("?????")
+        x2 = None
+        #if kwargs['encoder_out2'] is not None:
+            #print('out 2', kwargs['encoder_out2'].encoder_out)
+
+            #print(kwargs['incremental_state'])
+            #x2, extra2 = self.decoder(prev_output_tokens, encoder_out=kwargs['encoder_out2'], incremental_state=kwargs['incremental_state2'], encoder_out2 = kwargs['encoder_out'], balance_weight = kwargs['balance_weight'])
+
+
+        #print("------")
+        #print("1 attn", extra['attn'])
+        #print(extra['attn2'])
+        #print('2 attn', extra2['attn'])
+        #print(extra2['attn2'])
+        #print("------")
+        #print("x", x)
+        #print("x2", x2)
+        if x2 is not None:
+            return 0.5 * x + 0.5 * x2, extra
+
+        else:
+            return x, extra
+        
 
     def extract_features(self, src_tokens, src_lengths, prev_output_tokens, **kwargs):
         """

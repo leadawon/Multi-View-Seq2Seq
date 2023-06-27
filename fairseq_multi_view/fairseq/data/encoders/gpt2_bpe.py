@@ -28,6 +28,7 @@ class GPT2BPE(object):
         # fmt: on
 
     def __init__(self, args):
+        print("here!")
         encoder_json = file_utils.cached_path(
             getattr(args, 'gpt2_encoder_json', DEFAULT_ENCODER_JSON)
         )

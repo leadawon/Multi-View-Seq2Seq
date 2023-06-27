@@ -47,6 +47,8 @@ cpdef list batch_by_size_fast(
         sample_lens.append(num_tokens)
         sample_len = max(sample_len, num_tokens)
 
+        
+        
         assert max_tokens <= 0 or sample_len <= max_tokens, (
             "sentence at index {} of size {} exceeds max_tokens "
             "limit of {}!".format(idx, sample_len, max_tokens)

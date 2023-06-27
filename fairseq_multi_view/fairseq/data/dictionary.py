@@ -33,6 +33,9 @@ class Dictionary(object):
         self.pad_index = self.add_symbol(pad)
         self.eos_index = self.add_symbol(eos)
         self.unk_index = self.add_symbol(unk)
+        
+        #self.seg_index = self.add_symbol('<SEP>')
+        
         if extra_special_symbols:
             for s in extra_special_symbols:
                 self.add_symbol(s)
@@ -180,6 +183,8 @@ class Dictionary(object):
     def unk(self):
         """Helper to get index of unk symbol"""
         return self.unk_index
+    
+    
 
     @classmethod
     def load(cls, f):

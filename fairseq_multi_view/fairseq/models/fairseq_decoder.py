@@ -15,7 +15,9 @@ class FairseqDecoder(nn.Module):
         self.dictionary = dictionary
         self.onnx_trace = False
 
-    def forward(self, prev_output_tokens, encoder_out=None, **kwargs):
+        #print("Here!!!")
+
+    def forward(self, prev_output_tokens, encoder_out=None, encoder_out2 = None, **kwargs):
         """
         Args:
             prev_output_tokens (LongTensor): shifted output tokens of shape
@@ -65,6 +67,9 @@ class FairseqDecoder(nn.Module):
             return out.exp_() if not log_probs else out
 
         logits = net_output[0]
+        
+        #print(logits)
+
         if log_probs:
             return utils.log_softmax(logits, dim=-1, onnx_trace=self.onnx_trace)
         else:

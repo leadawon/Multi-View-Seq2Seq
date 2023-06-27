@@ -33,6 +33,10 @@ def infer_language_pair(path):
 def collate_tokens(values, pad_idx, eos_idx=None, left_pad=False, move_eos_to_beginning=False):
     """Convert a list of 1d tensors into a padded 2d tensor."""
     size = max(v.size(0) for v in values)
+
+    #print("????", size)
+    #print("!!!!!", [v.size(0) for v in values])
+
     res = values[0].new(len(values), size).fill_(pad_idx)
 
     def copy_tensor(src, dst):
@@ -46,6 +50,11 @@ def collate_tokens(values, pad_idx, eos_idx=None, left_pad=False, move_eos_to_be
 
     for i, v in enumerate(values):
         copy_tensor(v, res[i][size - len(v):] if left_pad else res[i][:len(v)])
+
+
+    #print("??????", res[0])
+
+    #print(".......")
     return res
 
 
@@ -226,6 +235,10 @@ def batch_by_size(
         )
 
     max_tokens = max_tokens if max_tokens is not None else -1
+    
+    #TODO changed this
+    #max_tokens = 750
+    
     max_sentences = max_sentences if max_sentences is not None else -1
     bsz_mult = required_batch_size_multiple
 

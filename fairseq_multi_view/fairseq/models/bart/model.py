@@ -8,8 +8,14 @@ Natural Language Generation, Translation, and Comprehension
 """
 
 import logging
-
+import torch
 import torch.nn as nn
+
+from torch.nn.utils.rnn import pad_sequence
+import pickle
+
+from torch.nn import TransformerEncoderLayer as tel
+from torch.nn import TransformerEncoder as te
 
 from fairseq import utils
 from fairseq.models import (
@@ -21,8 +27,28 @@ from fairseq.modules.transformer_sentence_encoder import init_bert_params
 
 from .hub_interface import BARTHubInterface
 
+import torch.nn.functional as F
+
+from fairseq.models import (
+    FairseqEncoder,
+    FairseqEncoderDecoderModel,
+    FairseqIncrementalDecoder,
+    register_model,
+    register_model_architecture,
+)
+from fairseq.modules import (
+    AdaptiveSoftmax,
+    LayerNorm,
+    PositionalEmbedding,
+    SinusoidalPositionalEmbedding,
+    TransformerDecoderLayer,
+    TransformerEncoderLayer,
+)
+
 
 logger = logging.getLogger(__name__)
+
+
 
 
 @register_model('bart')
@@ -44,6 +70,40 @@ class BARTModel(TransformerModel):
 
         self.classification_heads = nn.ModuleDict()
 
+        self.T = args.T
+
+        #TODO: 
+
+        self.section_positions = PositionalEmbedding(
+                    args.max_source_positions,
+                    1024,
+                    0,
+                    learned=args.encoder_learned_pos)
+        self.section_layernorm_embedding = LayerNorm(1024)
+            
+        #self.section = te(tel(d_model=1024, nhead=1), num_layers=1, norm = LayerNorm(1024))
+        self.section = nn.LSTM(input_size = 1024, hidden_size = 1024, num_layers = 1)
+        #self.balance_score = nn.Linear(2048,2)
+
+        self.w_proj_layer_norm = LayerNorm(1024)
+
+        self.w_proj = nn.Linear(1024, 1024)
+        #self.w_context_vector = torch.randn([1024, 1]).float().requires_grad_() 
+        self.w_context_vector = nn.Linear(1024, 1, bias = False)
+        #nn.Parameter(torch.randn([1024, 1]).float(), requires_grad = True)
+        
+        #torch.rand(10).doube().requires_grad_() 
+        
+        self.softmax = nn.Softmax(dim = 1)
+          
+        #self.balance_score = nn.Sequential(
+        #        nn.Linear(2048,2048),
+        #       nn.Tanh(),
+        #        nn.Linear(2048, 2)
+        #)
+
+        #self.softmax = nn.Softmax(dim = 1)
+
     @staticmethod
     def add_args(parser):
         super(BARTModel, BARTModel).add_args(parser)
@@ -61,24 +121,240 @@ class BARTModel(TransformerModel):
     def supported_targets(self):
         return {'self'}
 
+    
+    def forward_section_embeddings(self, embed, src_tokens):
+        
+        
+        x = embed.transpose(1,0) + self.section_positions(src_tokens)
+        
+        x = self.section_layernorm_embedding(x)
+
+        return x.transpose(1,0)
+
+    def section_extract(self, src_tokens, encoder_out):
+        
+        sections = []
+
+        #sections.append(self.encoder.embed_tokens(torch.tensor(self.encoder.dictionary.bos()).cuda()))
+        
+        encoder_out = encoder_out.transpose(0, 1)
+        
+        #max_length = torch.max(src_tokens.eq(1721).sum(dim = 1))
+        
+        #U = torch.rand(logits.shape)
+        #if logits.is_cuda:
+        #    U = U.cuda()
+        #print(encoder_out)
+
+        for i in range(0, src_tokens.shape[0]):
+            #print(src_tokens[i])
+            #segs = src_tokens[i].eq(24303) + src_tokens[i].eq(self.encoder.dictionary.eos())
+            # 1721
+            segs = src_tokens[i].eq(1721) + src_tokens[i].eq(15483)
+            #src_tokens[i].eq(15483) + src_tokens[i].eq(1721) 
+            if segs.sum() > 0:
+                #print(segs)
+                sections.append(encoder_out[i][segs])
+            else:
+                print(src_tokens[i])
+                print('no segmentstions')
+        
+        
+        
+        #print(sections)
+        sections = pad_sequence(sections)
+        #print(sections)
+        
+        section_padding_mask = sections.eq(0).sum(-1) > 0
+        section_padding = 1 - section_padding_mask.type(torch.long)
+        
+        #print(sections.shape)
+        #print(sections[-1])
+
+        return sections, section_padding_mask.transpose(1, 0), section_padding.transpose(1, 0)
+
+    
     def forward(
-        self, src_tokens, src_lengths, prev_output_tokens,
-        features_only=False, classification_head_name=None, **kwargs
+        self, src_tokens, src_lengths, prev_output_tokens, src2_tokens = None, src2_lengths = None,
+        features_only=False, balance = False, classification_head_name=None, **kwargs
     ):
         if classification_head_name is not None:
             features_only = True
+
+
+        #print("????", src_tokens.shape)
+
+        #print("????", src_tokens)
+        #print("!!!", src_lengths[0])
+        #print("----", src2_tokens[0], src2_tokens[0].shape, src2_lengths[0])
 
         encoder_out = self.encoder(
             src_tokens,
             src_lengths=src_lengths,
             **kwargs,
         )
+
+        sections, section_padding_mask, section_padding = self.section_extract(src_tokens, encoder_out.encoder_out)
+        # T * B * C
+        # B * T
+        
+        #print("???", sections)
+        #section_out = sections
+        #sections = self.forward_section_embeddings(sections, section_padding)
+        #section_out = self.section(sections, src_key_padding_mask = section_padding_mask)
+        section_out, _ = self.section(sections)
+        #print("....", section_out.shape)
+        #print(src2_tokens[0])
+
+        #src2_tokens = None
+        #balance = False
+        
+        if src2_tokens is not None:
+            encoder_out2 = self.encoder(
+                src2_tokens,
+                src_lengths=src2_lengths,
+                **kwargs,
+            )
+            
+            
+            sections2, section_padding_mask2, section_padding2 = self.section_extract(src2_tokens, encoder_out2.encoder_out)
+            
+            #sections2 = self.forward_section_embeddings(sections2, section_padding2)
+            #section_out2 = sections2
+            #section_out2 = self.section(sections2, src_key_padding_mask = section_padding_mask2)
+            section_out2, _ = self.section(sections2)
+
+        else:
+            encoder_out2 = None
+            sections2 = None
+            section_out2 = None
+            section_padding_mask2 = None
+        
+        #print(".....", encoder_out.encoder_out.shape)
+        
+        #print(".....", encoder_out.encoder_out.shape)
+
+        if balance:
+
+            #eos_mask1 = src_tokens.eq(2)
+            #eos_mask2 = src2_tokens.eq(2)
+
+            #print(src_tokens.shape)
+
+            #print(encoder_out.encoder_out.shape)
+
+
+
+            #src = encoder_out.encoder_out[src_tokens.eq(self.encoder.dictionary.eos()), :].view(encoder_out.encoder_out.size(0), -1, encoder_out.encoder_out.size(-1))[:, -1, :]
+
+            #print(src.shape)
+
+            #src2 = encoder_out2.encoder_out[src2_tokens.eq(self.encoder.dictionary.eos()), :].view(encoder_out2.encoder_out.size(0), -1, encoder_out2.encoder_out.size(-1))[:, -1, :]
+            
+            #print(src2.shape)
+
+            #src = encoder_out.encoder_out[-1, :].unsqueeze(1)
+            #src2 = encoder_out2.encoder_out[-1, :].unsqueeze(1)
+            #src = torch.mean(section_out.transpose(1, 0), dim = 1).unsqueeze(1)
+            #src2 = torch.mean(section_out2.transpose(1, 0), dim = 1).unsqueeze(1)
+
+            #src = torch.nn.functional.max_pool1d(section_out.transpose(1, 0).transpose(2,1), kernel_size = section_out.shape[1]).unsqueeze(-1)
+            #src2 = torch.nn.functional.max_pool1d(section_out2.transpose(1, 0).transpose(2,1), kernel_size = section_out2.shape[1]).unsqueeze(-1)
+            src = section_out[-1, :].unsqueeze(1)
+            src2 = section_out2[-1, :].unsqueeze(1)
+
+            #print(src)
+            #print(src2)
+            #print("1")
+            #print(sections)
+            #print(src)
+
+            #print('2')
+            #print(sections2)
+            #print(src2)
+            
+            #print(src.shape)
+
+            #print(encoder_out.encoder_out[-1, :].shape)
+            #print(src.shape)
+            #print(src2.shape)
+            
+            src_input = torch.cat([src, src2], dim = 1)
+
+            #print(src_input.shape)
+
+            Hw = torch.tanh(self.w_proj_layer_norm(self.w_proj(src_input)))
+
+            #print(Hw)
+            #Hw = torch.tanh(self.w_proj(src_input))
+
+            #balance_weight = self.softmax(Hw.matmul(self.w_context_vector).squeeze(-1))
+            balance_weight = self.softmax(self.w_context_vector(Hw).squeeze(-1))
+
+            #print(balance_weight)
+            #print(self.args.T)
+            #pt = p**(1/args.T)
+            
+            #self.T = self.args.T
+
+            original_balance_weight = balance_weight
+
+
+
+            balance_weight = balance_weight **(1/self.T)
+            balance_weight = balance_weight/balance_weight.sum(dim = 1, keepdim = True)
+            #targets_u = pt / pt.sum(dim=1, keepdim=True)
+
+            #print(balance_weight.shape)
+            #print(balance_weight)
+
+            
+
+            #balance_weight = self.softmax(self.balance_score(src_input))
+            #print(balance_weight.shape)
+            #print(balance_weight)
+        else:
+            balance_weight = None
+            original_balance_weight = None
+
+
+
+        #print('prev_output_token', prev_output_tokens)
+        #print('encoder_out.encoder_out', encoder_out.encoder_out)
+
         x, extra = self.decoder(
             prev_output_tokens,
-            encoder_out=encoder_out,
+            encoder_out= encoder_out,
+            encoder_out2 = encoder_out2,
             features_only=features_only,
+            balance_weight = balance_weight,
             **kwargs,
         )
+
+        #print(".........")
+        #print(x.shape)
+        #print(x)
+
+        '''
+        x2, extra2 = self.decoder(
+            prev_output_tokens,
+            encoder_out= encoder_out2,
+            encoder_out2 = encoder_out2,
+            features_only=features_only,
+            balance_weight = balance_weight,
+            **kwargs,
+        )
+        '''
+
+        #print(x)
+        #print(x2)
+        #x = 0.5 * x + 0.5 *  x2
+        #x = x2
+
+        #print("?????", x.shape)
+        extra['original_balance_weight'] = original_balance_weight
+
+        
 
         if classification_head_name is not None:
             sentence_representation = x[
@@ -108,6 +384,7 @@ class BARTModel(TransformerModel):
             load_checkpoint_heads=True,
             **kwargs,
         )
+        #print(x['task'], x['models'][0])
         return BARTHubInterface(x['args'], x['task'], x['models'][0])
 
     def register_classification_head(self, name, num_classes=None, inner_dim=None, **kwargs):
