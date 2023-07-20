@@ -121,22 +121,31 @@ class SequenceGenerator(object):
             src_tokens2 = encoder_input['src2_tokens']
             src_lengths2 = (src_tokens2.ne(self.eos) & src_tokens2.ne(self.pad)).long().sum(dim=1)
             input_size2 = src_tokens2.size()
+
+            src_tokens3 = encoder_input['src3_tokens']
+            src_lengths3 = (src_tokens3.ne(self.eos) & src_tokens3.ne(self.pad)).long().sum(dim=1)
+            input_size3 = src_tokens3.size()
         else:
             src_tokens2 = None
             src_lengths2 = None
             input_size2 = None
+
+            src_tokens3 = None
+            src_lengths3 = None
+            input_size3 = None
 
         
         
         # batch dimension goes first followed by source lengths
         bsz = input_size[0]
         if input_size2 is not None:
-            src_len = max(input_size[1], input_size2[1])
+            src_len = max(input_size[1], input_size2[1], input_size3[1])
         else:
             src_len = input_size[1]
 
         if 'src2_tokens' in encoder_input:
             src_len2 = input_size2[1]
+            src_len3 = input_size3[1]
 
         beam_size = self.beam_size
 
@@ -166,6 +175,7 @@ class SequenceGenerator(object):
             encoder_outs = model.reorder_encoder_out(encoder_outs, new_order)
             
             encoder_outs2 = None
+            encoder_outs3 = None
             balance_weight = None
 
         else:
@@ -178,9 +188,11 @@ class SequenceGenerator(object):
             #print("finished")
             #print("????", encoder_out[1][0].encoder_out.shape)
             encoder_outs2 = model.reorder_encoder_out(encoder_out[1], new_order)
+
+            encoder_outs3 = model.reorder_encoder_out(encoder_out[2], new_order)
             
-            balance_weight = encoder_out[2]
-            if encoder_out[2] is None:
+            balance_weight = encoder_out[3]
+            if encoder_out[3] is None:
                 balance_weight = None
             else:
                 #print(balance_weight)
@@ -208,6 +220,8 @@ class SequenceGenerator(object):
         attn, attn_buf = None, None
 
         attn2, attn_buf2 = None, None
+
+        attn3, attn_buf3 = None, None
 
         # The blacklist indicates candidates that should be ignored.
         # For example, suppose we're sampling and have already finalized 2/5
@@ -345,6 +359,7 @@ class SequenceGenerator(object):
                   
                 if encoder_outs2 is not None:
                     encoder_outs2 = model.reorder_encoder_out(encoder_outs2, reorder_state)
+                    encoder_outs3 = model.reorder_encoder_out(encoder_outs3, reorder_state)
 
                 if balance_weight is not None:
                     balance_weight = balance_weight.index_select(0, reorder_state)
@@ -355,22 +370,24 @@ class SequenceGenerator(object):
                 #print("out 1", encoder_outs2[0].encoder_out)
                 #print(step)
                 
-                lprobs, avg_attn_scores, avg_attn_scores2, balance_weight = model.forward_decoder(
-                tokens[:, :step + 1], encoder_outs, temperature=self.temperature, encoder_outs2 = encoder_outs2, balance_weight = balance_weight,
+                lprobs, avg_attn_scores, avg_attn_scores2, avg_attn_scores3 ,balance_weight = model.forward_decoder(
+                tokens[:, :step + 1], encoder_outs, temperature=self.temperature, encoder_outs2 = encoder_outs2, encoder_outs3 = encoder_outs3 ,balance_weight = balance_weight,
             )
                 
                 #break
 
             elif encoder_outs2 is not None:
                 lprobs, avg_attn_scores = model.forward_decoder(
-                    tokens[:, :step + 1], encoder_outs, temperature=self.temperature, encoder_outs2 = encoder_outs2, balance_weight = balance_weight,
+                    tokens[:, :step + 1], encoder_outs, temperature=self.temperature, encoder_outs2 = encoder_outs2, encoder_outs3 = encoder_outs3 ,balance_weight = balance_weight,
                 )
                 avg_attn_scores2 = None
+                avg_attn_scores3 = None
             else:
                 lprobs, avg_attn_scores = model.forward_decoder(
                     tokens[:, :step + 1], encoder_outs, temperature=self.temperature,
                 )
                 avg_attn_scores2 = None
+                avg_attn_scores3 = None
 
             lprobs[lprobs != lprobs] = -math.inf
 
@@ -429,7 +446,7 @@ class SequenceGenerator(object):
             
             if type(avg_attn_scores2) is list:
                 avg_attn_scores2 = avg_attn_scores2[0]
-
+                avg_attn_scores3 = avg_attn_scores3[0]
             
             if avg_attn_scores is not None:
                 if encoder_outs2 is None or balance_weight is not None:
@@ -439,7 +456,7 @@ class SequenceGenerator(object):
                     attn[:, :, step + 1].copy_(avg_attn_scores)
                 else:
                     if attn is None:
-                        attn = scores.new(bsz * beam_size, src_tokens.size(1) + src_tokens2.size(1), max_len + 2)
+                        attn = scores.new(bsz * beam_size, src_tokens.size(1) + src_tokens2.size(1) + src_tokens3.size(1) , max_len + 2)
                         attn_buf = attn.clone()
                     attn[:, :, step + 1].copy_(avg_attn_scores)
 
@@ -447,7 +464,12 @@ class SequenceGenerator(object):
                 if attn2 is None:
                     attn2 = scores.new(bsz * beam_size, src_tokens2.size(1), max_len + 2)
                     attn_buf2 = attn2.clone()
+
+                    attn3 = scores.new(bsz * beam_size, src_tokens3.size(1), max_len + 2)
+                    attn_buf3 = attn3.clone()
+
                 attn2[:, :, step + 1].copy_(avg_attn_scores2)
+                attn3[:, :, step + 1].copy_(avg_attn_scores3)
 
             scores = scores.type_as(lprobs)
             scores_buf = scores_buf.type_as(lprobs)
@@ -543,6 +565,9 @@ class SequenceGenerator(object):
                     attn2 = attn2.view(bsz, -1)[batch_idxs].view(new_bsz * beam_size, attn2.size(1), -1)
                     attn_buf2.resize_as_(attn2)
 
+                    attn3 = attn3.view(bsz, -1)[batch_idxs].view(new_bsz * beam_size, attn3.size(1), -1)
+                    attn_buf3.resize_as_(attn3)
+
                 bsz = new_bsz
             else:
                 batch_idxs = None
@@ -618,6 +643,7 @@ class SequenceGenerator(object):
             
             if attn2 is not None:
                 attn2, attn_buf2 = attn_buf2, attn2
+                attn3, attn_buf3 = attn_buf3, attn3
 
             # reorder incremental state in decoder
             reorder_state = active_bbsz_idx
@@ -643,6 +669,10 @@ class EnsembleModel(torch.nn.Module):
         if all(hasattr(m, 'decoder') and isinstance(m.decoder, FairseqIncrementalDecoder) for m in models):
             self.incremental_states2 = {m: {} for m in models}
 
+        self.incremental_states3 = None
+        if all(hasattr(m, 'decoder') and isinstance(m.decoder, FairseqIncrementalDecoder) for m in models):
+            self.incremental_states3 = {m: {} for m in models}
+
     def has_encoder(self):
         return hasattr(self.models[0], 'encoder')
 
@@ -655,7 +685,7 @@ class EnsembleModel(torch.nn.Module):
             return None
         if 'src2_tokens' not in encoder_input:
             
-            return [model.encoder(**encoder_input) for model in self.models], None, None
+            return [model.encoder(**encoder_input) for model in self.models], None, None , None ### wtf????????????????????????????? plus none 1
         else:
 
             src_tokens = encoder_input['src_tokens']
@@ -663,10 +693,17 @@ class EnsembleModel(torch.nn.Module):
             src2_tokens = encoder_input['src2_tokens']
             src2_length = encoder_input['src2_lengths']
 
+            src3_tokens = encoder_input['src3_tokens']
+            src3_length = encoder_input['src3_lengths']
+
+
             #print(src_lengths, src2_length)
 
             encoder_out = self.models[0].encoder(src_tokens, src_lengths=src_lengths)
             encoder_out2 = self.models[0].encoder(src2_tokens, src_lengths=src2_length)
+
+            encoder_out3 = self.models[0].encoder(src3_tokens, src_lengths=src3_length)
+
 
             sections, section_padding_mask, section_padding = self.models[0].section_extract(src_tokens, encoder_out.encoder_out)
             
@@ -682,6 +719,9 @@ class EnsembleModel(torch.nn.Module):
             #section_out2 = self.models[0].section(sections2, src_key_padding_mask = section_padding_mask2)
             #section_out2 = sections2
             section_out2, _ = self.models[0].section(sections2)
+
+            sections3, section_padding_mask3, section_padding3 = self.models[0].section_extract(src3_tokens, encoder_out3.encoder_out)
+            section_out3, _ = self.models[0].section(sections3)
 
             #print(balance)
 
@@ -699,10 +739,11 @@ class EnsembleModel(torch.nn.Module):
                 #src2 = torch.mean(section_out2.transpose(1, 0), dim = 1).unsqueeze(1)
                 src = section_out[-1, :].unsqueeze(1)
                 src2 = section_out2[-1, :].unsqueeze(1)
+                src3 = section_out3[-1, :].unsqueeze(1)
                 #src = torch.nn.functional.max_pool1d(section_out.transpose(1, 0).transpose(2,1), kernel_size = section_out.shape[1]).unsqueeze(-1)
                 #src2 = torch.nn.functional.max_pool1d(section_out2.transpose(1, 0).transpose(2,1), kernel_size = section_out2.shape[1]).unsqueeze(-1)
 
-                src_input = torch.cat([src, src2], dim = 1)
+                src_input = torch.cat([src, src2, src3], dim = 1)
                 Hw = torch.tanh(self.models[0].w_proj_layer_norm(self.models[0].w_proj(src_input)))
                 #Hw = torch.tanh(self.models[0].w_proj(src_input))
 
@@ -741,13 +782,13 @@ class EnsembleModel(torch.nn.Module):
            
             #print(balance_weight)
 
-            return ([encoder_out], [encoder_out2], balance_weight)
+            return ([encoder_out], [encoder_out2],[encoder_out3], balance_weight)
 
             
 
 
     @torch.no_grad()
-    def forward_decoder(self, tokens, encoder_outs, temperature=1., encoder_outs2 = None, balance_weight = None):
+    def forward_decoder(self, tokens, encoder_outs, temperature=1., encoder_outs2 = None, encoder_outs3 = None ,balance_weight = None):
         if len(self.models) == 1:
             return self._decode_one(
                 tokens,
@@ -757,8 +798,10 @@ class EnsembleModel(torch.nn.Module):
                 log_probs=True,
                 temperature=temperature,
                 encoder_outs2 = encoder_outs2[0] if encoder_outs2 is not None else None,
+                encoder_outs3 = encoder_outs3[0] if encoder_outs3 is not None else None,
                 balance_weight = balance_weight,
-                incremental_states2 = self.incremental_states2
+                incremental_states2 = self.incremental_states2,
+                incremental_states3 = self.incremental_states3
             )
 
         log_probs = []
@@ -785,17 +828,17 @@ class EnsembleModel(torch.nn.Module):
 
     def _decode_one(
         self, tokens, model, encoder_out, incremental_states, log_probs,
-        temperature=1., encoder_outs2 = None, balance_weight = None, incremental_states2 = None
+        temperature=1., encoder_outs2 = None, encoder_outs3 = None ,balance_weight = None, incremental_states2 = None, incremental_states3 = None
     ):
         if self.incremental_states is not None:
             #print("not None")
             decoder_out = list(model.forward_decoder(
-                tokens, encoder_out=encoder_out, incremental_state=self.incremental_states[model], encoder_out2 = encoder_outs2, balance_weight = balance_weight, incremental_state2 = incremental_states2,
+                tokens, encoder_out=encoder_out, incremental_state=self.incremental_states[model], encoder_out2 = encoder_outs2,encoder_out3 = encoder_outs3 ,balance_weight = balance_weight, incremental_state2 = incremental_states2, incremental_state3 = incremental_states3,
             ))
 
         else:
             print('None')
-            decoder_out = list(model.forward_decoder(tokens, encoder_out=encoder_out, encoder_out2 = encoder_outs2, balance_weight = balance_weight,))
+            decoder_out = list(model.forward_decoder(tokens, encoder_out=encoder_out, encoder_out2 = encoder_outs2,encoder_out3 = encoder_outs3 ,balance_weight = balance_weight,))
 
            
         
@@ -819,6 +862,7 @@ class EnsembleModel(torch.nn.Module):
 
         if type(attn) is dict:
             attn2 = attn.get('attn2', None)
+            attn3 = attn.get('attn3', None)
             balance_weight = attn.get('balance_weight', None)
             attn = attn.get('attn', None)
 
@@ -828,6 +872,7 @@ class EnsembleModel(torch.nn.Module):
 
         if type(attn2) is list:
             attn2 = attn2[0]
+            attn3 = attn3[0]
 
 
         if attn is not None:
@@ -838,6 +883,7 @@ class EnsembleModel(torch.nn.Module):
         if attn2 is not None:
             #print(attn2.shape)
             attn2 = attn2[:, -1, :]
+            attn3 = attn3[:, -1, :]
 
         if balance_weight is not None:
             #print(balance_weight.shape)
@@ -848,7 +894,7 @@ class EnsembleModel(torch.nn.Module):
         probs = model.get_normalized_probs(decoder_out, log_probs=log_probs)
         probs = probs[:, -1, :]
         if attn2 is not None:
-            return probs, attn, attn2, balance_weight
+            return probs, attn, attn2,attn3, balance_weight
         else:
             return probs, attn
 
@@ -870,7 +916,8 @@ class EnsembleModel(torch.nn.Module):
 
         for model in self.models:
             model.decoder.reorder_incremental_state(self.incremental_states2[model], new_order)
-
+        for model in self.models:
+            model.decoder.reorder_incremental_state(self.incremental_states3[model], new_order)
 
 class SequenceGeneratorWithAlignment(SequenceGenerator):
 

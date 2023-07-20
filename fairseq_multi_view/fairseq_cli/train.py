@@ -39,11 +39,12 @@ logger = logging.getLogger('fairseq_cli.train')
 
 
 def main(args, init_distributed=False):
+      
     utils.import_user_module(args)
 
     assert args.max_tokens is not None or args.max_sentences is not None, \
         'Must specify batch size either with --max-tokens or --max-sentences'
-
+    
     # Initialize CUDA and distributed training
     if torch.cuda.is_available() and not args.cpu:
         torch.cuda.set_device(args.device_id)
@@ -57,7 +58,7 @@ def main(args, init_distributed=False):
 
     # Print args
     logger.info(args)
-
+    
     # Setup task, e.g., translation, language modeling, etc.
     task = tasks.setup_task(args)
 
@@ -96,7 +97,7 @@ def main(args, init_distributed=False):
     valid_subsets = args.valid_subset.split(',')
 
     print(args.multi_views)
-
+    
     while (
         lr > args.min_lr
         and (
@@ -131,18 +132,20 @@ def main(args, init_distributed=False):
         print("Test on val set: ")
         
 
-        with open('../data/val_sent_trans_cons_label.source') as source, open('../data/val_sent_c99_label.source') as source2, open('./val_best_multi_attn_'+str(args.lr_weight)+'_.hypo', 'wt', encoding='utf-8') as fout:
+        with open('../data/val_sent_trans_cons_label.source') as source, open('../data/val_sent_c99_label.source') as source2,open('../data/val_sent_third_label.source') as source3, open('./val_best_multi_attn_'+str(args.lr_weight)+'_.hypo', 'wt', encoding='utf-8') as fout:
             s1 = source.readlines()
             s2 = source2.readlines()
+            s3 = source3.readlines()
             
             slines = [s1[0].strip()]
             slines2 = [s2[0].strip()]
+            slines3 = [s3[0].strip()]
             
             for i in tqdm(range(1, len(s1))):
                 if count % bsz == 0:
                     with torch.no_grad():
                         if args.multi_views:
-                            hypotheses_batch = bart.sample(slines, sentences2 = slines2, balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
+                            hypotheses_batch = bart.sample(slines, sentences2 = slines2,sentences3=slines3 ,balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
                         else:
                             hypotheses_batch = bart.sample(slines, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
                     for hypothesis in hypotheses_batch:
@@ -150,15 +153,17 @@ def main(args, init_distributed=False):
                         fout.flush()
                     slines = []
                     slines2 = []
-                
+                    slines3 = []
+
                 slines.append(s1[i].strip())
                 slines2.append(s2[i].strip())
+                slines3.append(s3[i].strip())
             
                 count += 1
                 
             if slines != []:
                 if args.multi_views:
-                    hypotheses_batch = bart.sample(slines, sentences2 = slines2, balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
+                    hypotheses_batch = bart.sample(slines, sentences2 = slines2, sentences3 = slines3,balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
                 else:
                     hypotheses_batch = bart.sample(slines, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
                 #hypotheses_batch = bart.sample(slines, sentences2 = slines2, balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
@@ -192,18 +197,20 @@ def main(args, init_distributed=False):
 
         count = 1
         bsz = 8
-        with open('../data/test_sent_trans_cons_label.source') as source, open('../data/test_sent_c99_label.source') as source2, open('./test_best_multi_attn_'+str(args.lr_weight)+'_.hypo', 'wt', encoding='utf-8') as fout:
+        with open('../data/test_sent_trans_cons_label.source') as source, open('../data/test_sent_c99_label.source') as source2, open('../data/test_sent_third_label.source') as source3, open('./test_best_multi_attn_'+str(args.lr_weight)+'_.hypo', 'wt', encoding='utf-8') as fout:
             s1 = source.readlines()
             s2 = source2.readlines()
+            s3 = source3.readlines()
             
             slines = [s1[0].strip()]
             slines2 = [s2[0].strip()]
+            slines2 = [s3[0].strip()]
             
             for i in tqdm(range(1, len(s1))):
                 if count % bsz == 0:
                     with torch.no_grad():
                         if args.multi_views:
-                            hypotheses_batch = bart.sample(slines, sentences2 = slines2, balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
+                            hypotheses_batch = bart.sample(slines, sentences2 = slines2, sentences3 = slines3, balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
                         else:
                             hypotheses_batch = bart.sample(slines, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
                     for hypothesis in hypotheses_batch:
@@ -211,15 +218,17 @@ def main(args, init_distributed=False):
                         fout.flush()
                     slines = []
                     slines2 = []
+                    slines3 = []
                 
                 slines.append(s1[i].strip())
                 slines2.append(s2[i].strip())
+                slines2.append(s3[i].strip())
             
                 count += 1
                 
             if slines != []:
                 if args.multi_views:
-                    hypotheses_batch = bart.sample(slines, sentences2 = slines2, balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
+                    hypotheses_batch = bart.sample(slines, sentences2 = slines2, sentences3 = slines3 ,balance = True, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
                 else:
                     hypotheses_batch = bart.sample(slines, beam=4, lenpen=2.0, max_len_b=100, min_len=5, no_repeat_ngram_size=3)
                 
@@ -278,6 +287,7 @@ def should_stop_early(args, valid_loss):
 @metrics.aggregate('train')
 def train(args, trainer, task, epoch_itr):
     """Train the model for one epoch."""
+    
     # Initialize data iterator
     itr = epoch_itr.next_epoch_itr(
         fix_batches_to_gpus=args.fix_batches_to_gpus,
@@ -289,6 +299,7 @@ def train(args, trainer, task, epoch_itr):
         else args.update_freq[-1]
     )
     itr = iterators.GroupedIterator(itr, update_freq)
+    
     progress = progress_bar.build_progress_bar(
         args, itr, epoch_itr.epoch, no_progress_bar='simple',
     )
@@ -299,6 +310,11 @@ def train(args, trainer, task, epoch_itr):
     valid_subsets = args.valid_subset.split(',')
     max_update = args.max_update or math.inf
     for samples in progress:
+#          ###
+#         for i in samples:#### samples[0] == first batch
+#             if len(i['net_input']['src_tokens']) == 10:
+#                 print(i['net_input']['src_tokens'])
+#          ###
         log_output = trainer.train_step(samples)
         num_updates = trainer.get_num_updates()
         if log_output is None:

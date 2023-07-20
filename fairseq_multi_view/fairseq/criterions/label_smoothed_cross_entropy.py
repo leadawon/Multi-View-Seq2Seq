@@ -70,9 +70,10 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
 
         #print(self.args.multi_views)
         net_output = model(**sample['net_input'], balance = self.args.balance)
-        
+        #model == bart
         #print("!!!!!", net_output[0].shape)
-
+        
+        
         loss, nll_loss = self.compute_loss(model, net_output, sample, reduce=reduce)
         
         # adding entropy maximization loss here to try
@@ -80,8 +81,9 @@ class LabelSmoothedCrossEntropyCriterion(FairseqCriterion):
         #print('orignal, ', balance_weight)
         #print('after sharpen, ', net_output[1]['balance_weight'])
         
-        #print(balance_weight)
-
+#         print(balance_weight)
+#         print("*"*100)
+        
         #extra_loss = None
 
         #print('before', loss)

@@ -1,0 +1,11 @@
+*.source
+*.target
+*.hypo
+*.pkl
+*.json
+*.bpe
+checkpoints/
+cnn_dm-bin/
+cnn_dm-bin_2/
+cnn_dm-bin_3/
+

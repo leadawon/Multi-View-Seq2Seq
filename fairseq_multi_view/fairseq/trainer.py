@@ -107,6 +107,12 @@ class Trainer(object):
         #if self._optimizer2 is None:
         #    self._build_optimizer()
         return self._optimizer2
+    
+    @property
+    def optimizer3(self):
+        #if self._optimizer2 is None:
+        #    self._build_optimizer()
+        return self._optimizer3
 
     @property
     def lr_scheduler(self):
@@ -177,15 +183,21 @@ class Trainer(object):
         print("group2: ")
         print(len(new_params))
 
+        third_params = list(filter(lambda p: id(p) in new_params_id and p.requires_grad, self.model.parameters()))
+        print("group3: ")
+        print(len(third_params))
+
         params = [
             {"params": base_params},
             {"params": new_params},
+            {"params": third_params},
         ]
         # "weight_decay": 0.01
         
         
 
         params2 = None
+        params3 = None
 
         '''
         if self.args.balance:
@@ -227,13 +239,17 @@ class Trainer(object):
             if self.args.balance and params2 is not None:
                 self._optimizer2 = optim.build_optimizer(self.args, params2)
 
+            self._optimizer3 = None
+            if self.args.balance and params3 is not None:
+                self._optimizer3 = optim.build_optimizer(self.args, params3)
+
 
         if self.args.use_bmuf:
             self._optimizer = optim.FairseqBMUF(self.args, self._optimizer)
 
         # We should initialize the learning rate scheduler immediately after
         # building the optimizer, so that the initial learning rate is set.
-        self._lr_scheduler = lr_scheduler.build_lr_scheduler(self.args, self.optimizer, self._optimizer2)
+        self._lr_scheduler = lr_scheduler.build_lr_scheduler(self.args, self.optimizer, self._optimizer2, self._optimizer3)
         self._lr_scheduler.step_update(0)
 
     def save_checkpoint(self, filename, extra_state):
@@ -345,7 +361,7 @@ class Trainer(object):
 
         return extra_state
 
-    def get_train_iterator(
+    def get_train_iterator( # train dataset loading?? dw
         self,
         epoch,
         combine=True,
@@ -485,11 +501,13 @@ class Trainer(object):
                     self.optimizer.multiply_grads(1 / sample_size)
                     if self.optimizer2 is not None:
                         self.optimizer2.multiply_grads(1 / sample_size)
+                        self.optimizer3.multiply_grads(1 / sample_size)
 
             # clip grads
             grad_norm = self.optimizer.clip_grad_norm(self.args.clip_norm)
             if self.optimizer2 is not None:
                 grad_norm = self.optimizer2.clip_grad_norm(self.args.clip_norm)
+                grad_norm = self.optimizer3.clip_grad_norm(self.args.clip_norm)
 
             # check that grad norms are consistent across workers
             if not self.args.use_bmuf:
@@ -499,6 +517,7 @@ class Trainer(object):
             self.optimizer.step()
             if self.optimizer2 is not None:
                 self.optimizer2.step()
+                self.optimizer3.step()
 
             self.set_num_updates(self.get_num_updates() + 1)
 

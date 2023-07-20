@@ -29,3 +29,18 @@ do
     --keep-empty;
   done
 done
+
+
+for SPLIT in train_sent_third_label val_sent_third_label test_sent_third_label
+do
+  for LANG in source target
+  do
+    python -m examples.roberta.multiprocessing_bpe_encoder \
+    --encoder-json encoder.json \
+    --vocab-bpe vocab.bpe \
+    --inputs "../data/$SPLIT.$LANG" \
+    --outputs "../data/$SPLIT.bpe.$LANG" \
+    --workers 60 \
+    --keep-empty;
+  done
+done

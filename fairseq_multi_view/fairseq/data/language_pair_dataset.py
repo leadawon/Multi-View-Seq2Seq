@@ -67,6 +67,10 @@ def collate(
         src2_tokens = src2_tokens.index_select(0, sort_order)
         src2_lengths = torch.LongTensor([s['source2'].numel() for s in samples]).index_select(0, sort_order)
         
+    if samples[0].get('source3', None) is not None:
+        src3_tokens = merge('source3', left_pad=left_pad_source)
+        src3_tokens = src3_tokens.index_select(0, sort_order)
+        src3_lengths = torch.LongTensor([s['source3'].numel() for s in samples]).index_select(0, sort_order)
 
     #print(sort_order[:10])
     #print(sort_order2[:10])
@@ -106,7 +110,9 @@ def collate(
                 'src_tokens': src_tokens,
                 'src_lengths': src_lengths,
                 'src2_tokens':src2_tokens,
-                'src2_lengths':src2_lengths
+                'src2_lengths':src2_lengths,
+                'src3_tokens':src3_tokens,
+                'src3_lengths':src3_lengths
             },
             'target': target,
         }
@@ -193,7 +199,7 @@ class LanguagePairDataset(FairseqDataset):
     def __init__(
         self, src, src_sizes, src_dict,
         tgt=None, tgt_sizes=None, tgt_dict=None,
-        src2 = None, src2_sizes = None,
+        src2 = None, src2_sizes = None, src3 = None, src3_sizes = None,
         left_pad_source=True, left_pad_target=False,
         max_source_positions=1024, max_target_positions=1024,
         shuffle=True, input_feeding=True,
@@ -209,6 +215,9 @@ class LanguagePairDataset(FairseqDataset):
 
         self.src2 = src2
         self.src_sizes2 = src2_sizes
+
+        self.src3 = src3
+        self.src_sizes3 = src3_sizes
 
         self.tgt = tgt
         self.src_sizes = np.array(src_sizes)
@@ -234,6 +243,7 @@ class LanguagePairDataset(FairseqDataset):
 
 
         src2_item = self.src2[index] if self.src2 is not None else None
+        src3_item = self.src3[index] if self.src3 is not None else None
 
         # Append EOS to end of tgt sentence if it does not have an EOS and remove
         # EOS from end of src sentence if it exists. This is useful when we use
@@ -255,6 +265,9 @@ class LanguagePairDataset(FairseqDataset):
 
             if self.src2 and self.src2[index][-1] != bos:
                 src2_item = torch.cat([torch.LongTensor([bos]), self.src2[index]])
+            
+            if self.src3 and self.src3[index][-1] != bos:
+                src3_item = torch.cat([torch.LongTensor([bos]), self.src3[index]])
 
 
         if self.remove_eos_from_source:
@@ -264,12 +277,16 @@ class LanguagePairDataset(FairseqDataset):
             
             if self.src2 and self.src2[index][-2] == eos:
                 src2_item = self.src2[index][:-1]
+            
+            if self.src3 and self.src3[index][-2] == eos:
+                src3_item = self.src3[index][:-1]
 
         if self.src2:
             example = {
                 'id': index,
                 'source': src_item,
                 'source2': src2_item,
+                'source3': src3_item,
                 'target': tgt_item,
             }
         else:

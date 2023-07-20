@@ -671,6 +671,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         src_lengths: Optional[Any] = None,
         return_all_hiddens: bool = False,
         encoder_out2: Optional[EncoderOut] = None,
+        encoder_out3: Optional[EncoderOut] = None,
         balance_weight = None,
     ):
         """
@@ -699,6 +700,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
             alignment_layer=alignment_layer,
             alignment_heads=alignment_heads,
             encoder_out2=encoder_out2,
+            encoder_out3=encoder_out3,
             balance_weight = balance_weight,
         )
 
@@ -717,6 +719,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
         alignment_layer: Optional[int] = None,
         alignment_heads: Optional[int] = None,
         encoder_out2: Optional[EncoderOut] = None,
+        encoder_out3: Optional[EncoderOut] = None,
         balance_weight = None,
     ):
         """
@@ -817,6 +820,17 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 else:
                     #print("not layer_wise_attention")
                     encoder_state2 = encoder_out2.encoder_out
+            
+            encoder_state3: Optional[Tensor] = None
+            if encoder_out3 is not None:
+                if self.layer_wise_attention:
+                    #print("layer_wise_attention")
+                    encoder_states3 = encoder_out3.encoder_states
+                    assert encoder_states3 is not None
+                    encoder_state3 = encoder_states3[idx]
+                else:
+                    #print("not layer_wise_attention")
+                    encoder_state2 = encoder_out2.encoder_out
 
             if incremental_state is None and not full_context_alignment:
                 self_attn_mask = self.buffered_future_mask(x)
@@ -842,24 +856,32 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                     need_attn=bool((idx == alignment_layer)),
                     need_head_weights=bool((idx == alignment_layer)),
                     encoder_out2 = encoder_state2,
+                    encoder_out3 = encoder_state3,
                     encoder_padding_mask2 = encoder_out2.encoder_padding_mask if encoder_out2 is not None else None,
-                    balance_weight = balance_weight,
-                )
+                    encoder_padding_mask3 = encoder_out3.encoder_padding_mask if encoder_out3 is not None else None,
+                    balance_weight = balance_weight
+                )### balance? check dw
 
                 
 
                 if balance_weight is not None:
                     layer_attn2 = _
+                    layer_attn3 = _
                 else:
                     layer_attn2 = None
+                    layer_attn3 = None
+
 
                 inner_states.append(x)
 
                 attn2 = None
+                attn3 = None
                 if layer_attn is not None and idx == alignment_layer:
                     attn = layer_attn.float()
                     if layer_attn2 is not None:
                         attn2 = layer_attn2.float()
+                    if layer_attn3 is not None:
+                        attn3 = layer_attn3.float()
 
             
            
@@ -875,6 +897,12 @@ class TransformerDecoder(FairseqIncrementalDecoder):
                 attn2 = attn2[:alignment_heads]
             # average probabilities over heads
             attn2 = attn2.mean(dim=0)
+        
+        if attn3 is not None:
+            if alignment_heads is not None:
+                attn3 = attn3[:alignment_heads]
+            # average probabilities over heads
+            attn3 = attn3.mean(dim=0)
 
         if self.layer_norm is not None:
             x = self.layer_norm(x)
@@ -887,7 +915,7 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         #print("in extract feature", x)
 
-        return x, {"attn": [attn], "attn2": [attn2], "inner_states": inner_states, "balance_weight": balance_weight}
+        return x, {"attn": [attn], "attn2": [attn2],"attn3":[attn3], "inner_states": inner_states, "balance_weight": balance_weight}
 
     def output_layer(self, features):
         """Project features to the vocabulary size."""

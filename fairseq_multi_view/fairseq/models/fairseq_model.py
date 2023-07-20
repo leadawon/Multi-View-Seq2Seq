@@ -236,10 +236,11 @@ class FairseqEncoderDecoderModel(BaseFairseqModel):
         #print('out 1', kwargs['encoder_out'].encoder_out)
         #print(kwargs['incremental_state'])
 
-        x, extra = self.decoder(prev_output_tokens, encoder_out=kwargs['encoder_out'], incremental_state=kwargs['incremental_state'], encoder_out2 = kwargs['encoder_out2'], balance_weight = kwargs['balance_weight'])
+        x, extra = self.decoder(prev_output_tokens, encoder_out=kwargs['encoder_out'], incremental_state=kwargs['incremental_state'], encoder_out2 = kwargs['encoder_out2'],encoder_out3 = kwargs['encoder_out3'], balance_weight = kwargs['balance_weight'])
         #print(kwargs.keys())
         #print("?????")
         x2 = None
+        x3 = None
         #if kwargs['encoder_out2'] is not None:
             #print('out 2', kwargs['encoder_out2'].encoder_out)
 
@@ -256,7 +257,7 @@ class FairseqEncoderDecoderModel(BaseFairseqModel):
         #print("x", x)
         #print("x2", x2)
         if x2 is not None:
-            return 0.5 * x + 0.5 * x2, extra
+            return 0.333 * x + 0.333 * x2 + 0.333 * x3, extra
 
         else:
             return x, extra

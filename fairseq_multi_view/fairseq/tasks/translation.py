@@ -50,7 +50,7 @@ def load_langpair_dataset(
     tgt_datasets = []
 
     src2_datasets = []
-
+    src3_datasets = []
     
 
     for k in itertools.count():
@@ -61,22 +61,25 @@ def load_langpair_dataset(
             prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, src, tgt))
             if multi_views:
                 prefix2 = os.path.join(data_path[:-2], '{}.{}-{}.'.format(split_k, src, tgt))
+                prefix3 = os.path.join(data_path[:-2], '{}.{}-{}.'.format(split_k, src, tgt))
 
         elif split_exists(split_k, tgt, src, src, data_path):
             prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, tgt, src))
             if multi_views:
                 prefix2 = os.path.join(data_path[:-2], '{}.{}-{}.'.format(split_k, tgt, src))
+                prefix3 = os.path.join(data_path[:-1]+"3", '{}.{}-{}.'.format(split_k, src, tgt))
 
         else:
             if k > 0:
                 break
             else:
                 raise FileNotFoundError('Dataset not found: {} ({})'.format(split, data_path))
-
+        
         src_dataset = data_utils.load_indexed_dataset(prefix + src, src_dict, dataset_impl)
         
         if multi_views:
             src_dataset2 = data_utils.load_indexed_dataset(prefix2 + src, src_dict, dataset_impl)
+            src_dataset3 = data_utils.load_indexed_dataset(prefix3 + src, src_dict, dataset_impl)
 
 
         if truncate_source:
@@ -96,15 +99,24 @@ def load_langpair_dataset(
                     src_dict.eos(),
                 )
 
+                src_dataset3 = AppendTokenDataset(
+                    TruncateDataset(
+                        StripTokenDataset(src_dataset3, src_dict.eos()),
+                        max_source_positions - 1,
+                    ),
+                    src_dict.eos(),
+                )
+        
         src_datasets.append(src_dataset)
         
         if multi_views:
             src2_datasets.append(src_dataset2)
+            src3_datasets.append(src_dataset3)
 
         tgt_datasets.append(
             data_utils.load_indexed_dataset(prefix + tgt, tgt_dict, dataset_impl)
         )
-
+        
         logger.info('{} {} {}-{} {} examples'.format(
             data_path, split_k, src, tgt, len(src_datasets[-1])
         ))
@@ -114,23 +126,31 @@ def load_langpair_dataset(
 
 
     
-    assert len(src_datasets) == len(tgt_datasets)
+    assert len(src_datasets) == len(tgt_datasets) 
 
     if multi_views:
         assert len(src_datasets) == len(src2_datasets)
-
+        assert len(src2_datasets) == len(src3_datasets)
+    
+    
+    
+    
     if len(src_datasets) == 1:
         src_dataset, tgt_dataset = src_datasets[0], tgt_datasets[0]
         
         if multi_views:
             src2_dataset =  src2_datasets[0]
+            src3_dataset =  src3_datasets[0]
 
-            print("!!!", len(src_dataset), len(src2_dataset))
+            print("!!!", len(src_dataset), len(src2_dataset),len(src3_dataset))
             #print("!!!", src_dataset[0], src2_dataset[0])
+            
 
     else:
+        
         sample_ratios = [1] * len(src_datasets)
         sample_ratios[0] = upsample_primary
+        
         src_dataset = ConcatDataset(src_datasets, sample_ratios)
         tgt_dataset = ConcatDataset(tgt_datasets, sample_ratios)
 
@@ -140,6 +160,7 @@ def load_langpair_dataset(
 
         if multi_views:
             src2_dataset = PrependTokenDataset(src2_dataset, src_dict.bos())
+            src3_dataset = PrependTokenDataset(src3_dataset, src_dict.bos())
 
         tgt_dataset = PrependTokenDataset(tgt_dataset, tgt_dict.bos())
 
@@ -154,7 +175,7 @@ def load_langpair_dataset(
             src_dataset, src_dataset.sizes, src_dict,
             tgt_dataset, tgt_dataset.sizes, tgt_dict,
             
-            src2 = src2_dataset,
+            src2 = src2_dataset, src3 = src3_dataset,
 
             left_pad_source=left_pad_source,
             left_pad_target=left_pad_target,
@@ -312,8 +333,8 @@ class TranslationTask(FairseqTask):
             multi_views = self.multi_views,
         )
 
-    def build_dataset_for_inference(self, src_tokens, src_lengths, src_tokens2 = None, src_length2 = None):
-        return LanguagePairDataset(src_tokens, src_lengths, self.source_dictionary, src2 = src_tokens2, src2_sizes = src_lengths)
+    def build_dataset_for_inference(self, src_tokens, src_lengths, src_tokens2 = None ,src_length2 = None, src_tokens3 = None, src_length3 = None):
+        return LanguagePairDataset(src_tokens, src_lengths, self.source_dictionary, src2 = src_tokens2, src2_sizes = src_lengths, src3 = src_tokens3, src3_sizes = src_lengths)
 
     def build_model(self, args):
         if getattr(args, 'eval_bleu', False):

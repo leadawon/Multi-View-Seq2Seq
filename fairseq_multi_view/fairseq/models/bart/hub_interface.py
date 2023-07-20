@@ -100,7 +100,7 @@ class BARTHubInterface(nn.Module):
             return sentences[0]
         return sentences
 
-    def _build_sample(self, src_tokens: List[torch.LongTensor], src_tokens2 = None):
+    def _build_sample(self, src_tokens: List[torch.LongTensor], src_tokens2 = None, src_tokens3 = None):
         # assert torch.is_tensor(src_tokens)
         if src_tokens2 == None:
             dataset = self.task.build_dataset_for_inference(
@@ -109,10 +109,12 @@ class BARTHubInterface(nn.Module):
             )
         else:
             dataset = self.task.build_dataset_for_inference(
-                src_tokens,
-                [x.numel() for x in src_tokens],
-                src_tokens2,
-                [x.numel() for x in src_tokens2],
+                src_tokens = src_tokens,
+                src_lengths = [x.numel() for x in src_tokens],
+                src_tokens2 = src_tokens2,
+                src_length2 = [x.numel() for x in src_tokens2],
+                src_tokens3 = src_tokens3,
+                src_length3 = [x.numel() for x in src_tokens3],
             )
         #print(self.device)
         sample = dataset.collater(dataset)
@@ -122,15 +124,16 @@ class BARTHubInterface(nn.Module):
         )
         return sample
 
-    def sample(self, sentences: List[str], sentences2 = None, beam: int = 1, verbose: bool = False, balance = False, **kwargs) -> str:
+    def sample(self, sentences: List[str], sentences2 = None, sentences3 = None ,beam: int = 1, verbose: bool = False, balance = False, **kwargs) -> str:
         input = [self.encode(sentence) for sentence in sentences]
         
         #print(input)
 
         if sentences2 is not None:
             input2  = [self.encode(sentence2) for sentence2 in sentences2]
+            input3  = [self.encode(sentence3) for sentence3 in sentences3]
 
-            hypos = self.generate(input, beam, verbose, tokens2 = input2, balance = balance, **kwargs)
+            hypos = self.generate(input, beam, verbose, tokens2 = input2,tokens3 = input3, balance = balance, **kwargs)
         
         else:
             hypos = self.generate(input, beam, verbose, **kwargs)
@@ -138,10 +141,10 @@ class BARTHubInterface(nn.Module):
 
         return [self.decode(x['tokens']) for x in hypos]
 
-    def generate(self, tokens: List[torch.LongTensor], beam: int = 5, verbose: bool = False, tokens2 = None, balance = False, **kwargs) -> torch.LongTensor:
+    def generate(self, tokens: List[torch.LongTensor], beam: int = 5, verbose: bool = False, tokens2 = None,tokens3 = None, balance = False, **kwargs) -> torch.LongTensor:
         
         
-        sample = self._build_sample(tokens, tokens2)
+        sample = self._build_sample(tokens, tokens2, tokens3)
 
         # build generator using current args as well as any kwargs
         gen_args = copy.copy(self.args)

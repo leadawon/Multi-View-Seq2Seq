@@ -93,7 +93,7 @@ class TransformerEncoderLayer(nn.Module):
         # will become -inf, which results in NaN in model parameters
         # TODO: to formally solve this problem, we need to change fairseq's
         # MultiheadAttention. We will do this later on.
-        x, _, _ = self.self_attn(
+        x, _, _, _ = self.self_attn(
             query=x, key=x, value=x, key_padding_mask=encoder_padding_mask
         )
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -199,8 +199,10 @@ class TransformerDecoderLayer(nn.Module):
         need_attn: bool = False,
         need_head_weights: bool = False,
         encoder_out2 = None,
+        encoder_out3 = None,
         balance_weight = None,
         encoder_padding_mask2 = None,
+        encoder_padding_mask3 = None,
     ):
         """
         Args:
@@ -216,9 +218,10 @@ class TransformerDecoderLayer(nn.Module):
             encoded output of shape `(seq_len, batch, embed_dim)`
         """
         #print(encoder_out2)
-        #print(balance_weight)
+        
 
         attn2 = None
+        attn3 = None
 
         if need_head_weights:
             need_attn = True
@@ -272,7 +275,7 @@ class TransformerDecoderLayer(nn.Module):
 
         #print('input x', x)
         
-        x, attn, _ = self.self_attn(
+        x, attn, _ , _ = self.self_attn(
             query=x,
             key=y,
             value=y,
@@ -326,7 +329,7 @@ class TransformerDecoderLayer(nn.Module):
                     #print("Incremental_state: ",incremental_state )
                     if need_head_weights:
                         
-                        x, attn, attn2 = self.encoder_attn(
+                        x, attn, attn2, attn3 = self.encoder_attn(
                             query=x,
                             key=encoder_out,
                             value=encoder_out,
@@ -334,12 +337,16 @@ class TransformerDecoderLayer(nn.Module):
                             key2 = encoder_out2,
                             value2 = encoder_out2,
 
+                            key3= encoder_out3,
+                            value3 = encoder_out3,
 
                             balance_weight = balance_weight,
 
                             key_padding_mask=encoder_padding_mask,
 
                             key_padding_mask2=encoder_padding_mask2,
+
+                            key_padding_mask3=encoder_padding_mask3,
 
                             incremental_state=incremental_state,
 
@@ -348,13 +355,14 @@ class TransformerDecoderLayer(nn.Module):
                             need_head_weights=need_head_weights,
                         )
                         #print('output', x)
-
+                        
                     else:
-
+                        
+                        
                         #print('here')
                         #print('incremental_state', incremental_state)
 
-                        x, attn, _ = self.encoder_attn(
+                        x, attn, _, _ = self.encoder_attn(
                             query=x,
                             key=encoder_out,
                             value=encoder_out,
@@ -362,12 +370,17 @@ class TransformerDecoderLayer(nn.Module):
                             key2 = encoder_out2,
                             value2 = encoder_out2,
 
+                            key3 = encoder_out3,
+                            value3 = encoder_out3,
+
 
                             balance_weight = balance_weight,
 
                             key_padding_mask=encoder_padding_mask,
 
                             key_padding_mask2=encoder_padding_mask2,
+
+                            key_padding_mask3=encoder_padding_mask3,
 
                             incremental_state=incremental_state,
 
@@ -384,18 +397,18 @@ class TransformerDecoderLayer(nn.Module):
                     #print(encoder_out2.shape)
 
 
-                    concat_out = torch.cat([encoder_out, encoder_out2], dim = 0)
+                    concat_out = torch.cat([encoder_out, encoder_out2, encoder_out3], dim = 0)
                     #print(".......")
                     #print(encoder_out.shape, encoder_out2.shape)
                     #print(concat_out.shape)
                     #print("1: ", encoder_padding_mask.shape)
                     #print("2: ",encoder_padding_mask2.shape)
 
-                    encoder_padding = torch.cat([encoder_padding_mask, encoder_padding_mask2], dim = 1)
+                    encoder_padding = torch.cat([encoder_padding_mask, encoder_padding_mask2, encoder_padding_mask3], dim = 1)
                     #print(encoder_padding_mask[0], encoder_padding_mask2[0])
                     #print(encoder_padding.shape)
 
-                    x, attn, _ = self.encoder_attn(
+                    x, attn, _ , _= self.encoder_attn(
                     query=x,
                     key=concat_out,
                     value=concat_out,
@@ -407,7 +420,7 @@ class TransformerDecoderLayer(nn.Module):
                 )
             
             else:
-                x, attn, _ = self.encoder_attn(
+                x, attn, _ , _= self.encoder_attn(
                     query=x,
                     key=encoder_out,
                     value=encoder_out,
@@ -456,9 +469,9 @@ class TransformerDecoderLayer(nn.Module):
             return x, attn, self_attn_state
         
         if attn2 is not None:
-            return x, attn, attn2
+            return x, attn, attn2, attn3
         else:
-            return x, attn, None
+            return x, attn, None, None
 
     def make_generation_fast_(self, need_attn: bool = False, **kwargs):
         self.need_attn = need_attn

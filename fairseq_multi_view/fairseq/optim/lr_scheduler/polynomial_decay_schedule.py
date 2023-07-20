@@ -10,8 +10,8 @@ from . import FairseqLRScheduler, register_lr_scheduler
 class PolynomialDecaySchedule(FairseqLRScheduler):
     """Decay the LR on a fixed schedule."""
 
-    def __init__(self, args, optimizer, optimizer2 = None):
-        super().__init__(args, optimizer, optimizer2)
+    def __init__(self, args, optimizer, optimizer2 = None, optimizer3 = None):
+        super().__init__(args, optimizer, optimizer2, optimizer3)
 
         # set defaults
         args.warmup_updates = getattr(args, 'warmup_updates', 0) or 0
@@ -31,6 +31,7 @@ class PolynomialDecaySchedule(FairseqLRScheduler):
 
         if optimizer2 is not None:
             self.optimizer2.set_lr(self.warmup_factor * self.lr * 10)
+            self.optimizer3.set_lr(self.warmup_factor * self.lr * 10)
 
     @staticmethod
     def add_args(parser):
@@ -61,6 +62,7 @@ class PolynomialDecaySchedule(FairseqLRScheduler):
 
         if self.optimizer2 is not None:
             self.optimizer2.set_lr(self.warmup_factor * self.lr * 10)
+            self.optimizer3.set_lr(self.warmup_factor * self.lr * 10)
 
         return self.optimizer.get_lr()
 
@@ -80,5 +82,6 @@ class PolynomialDecaySchedule(FairseqLRScheduler):
 
         if self.optimizer2 is not None:
             self.optimizer2.set_lr(self.warmup_factor * self.lr * 10)
+            self.optimizer3.set_lr(self.warmup_factor * self.lr * 10)
 
         return self.optimizer.get_lr()

@@ -117,8 +117,11 @@ class MultiheadAttention(nn.Module):
 
         key2: Optional[Tensor] = None,
         value2: Optional[Tensor] = None,
+        key3: Optional[Tensor] = None,
+        value3: Optional[Tensor] = None,
         balance_weight = None,
         key_padding_mask2 = None,
+        key_padding_mask3 = None,
     ) -> Tuple[Tensor, Optional[Tensor]]:
         """Input shape: Time x Batch x Channel
 
@@ -192,6 +195,7 @@ class MultiheadAttention(nn.Module):
                 if static_kv:
                     assert self.encoder_decoder_attention and not self.self_attention
                     key2 = value2 = None
+                    key3 = value3 = None
 
         else:
             saved_state = None
@@ -202,6 +206,8 @@ class MultiheadAttention(nn.Module):
             v = self.v_proj(query)
             k2 = None
             v2 = None
+            k3 = None
+            v3 = None
         elif self.encoder_decoder_attention:
             
             #print('key', key)
@@ -213,6 +219,8 @@ class MultiheadAttention(nn.Module):
                 k = v = None
                 k2 = None
                 v2 = None
+                k3 = None
+                v3 = None
             else:
                 k = self.k_proj(key)
                 v = self.v_proj(key)
@@ -220,9 +228,13 @@ class MultiheadAttention(nn.Module):
                 #print("here!!!")
                 k2 = None
                 v2 = None
+                k3 = None
+                v3 = None
                 if key2 is not None:
                     k2 = self.k_proj(key2)
                     v2 = self.v_proj(key2)
+                    k3 = self.k_proj(key3)
+                    v3 = self.v_proj(key3)
 
             #print('k', k)
             #print('v', v)
@@ -235,6 +247,8 @@ class MultiheadAttention(nn.Module):
             v = self.v_proj(value)
             k2 = None
             v2 = None
+            k3 = None
+            v3 = None
         
         q *= self.scaling
 
@@ -248,6 +262,9 @@ class MultiheadAttention(nn.Module):
             if key2 is not None:
                 k2 = torch.cat([k2, self.bias_k.repeat(1, bsz, 1)])
                 v2 = torch.cat([v2, self.bias_v.repeat(1, bsz, 1)])
+
+                k3 = torch.cat([k3, self.bias_k.repeat(1, bsz, 1)])
+                v3 = torch.cat([v3, self.bias_v.repeat(1, bsz, 1)])
 
 
             if attn_mask is not None:
@@ -272,6 +289,15 @@ class MultiheadAttention(nn.Module):
                     dim=1,
                 )
 
+            if key_padding_mask3 is not None:
+                key_padding_mask3 = torch.cat(
+                    [
+                        key_padding_mask3,
+                        key_padding_mask3.new_zeros(key_padding_mask3.size(0), 1),
+                    ],
+                    dim=1,
+                )
+
         q = (
             q.contiguous()
             .view(tgt_len, bsz * self.num_heads, self.head_dim)
@@ -290,6 +316,13 @@ class MultiheadAttention(nn.Module):
                 .view(-1, bsz * self.num_heads, self.head_dim)
                 .transpose(0, 1)
             )
+        
+        if k3 is not None:
+            k3 = (
+                k3.contiguous()
+                .view(-1, bsz * self.num_heads, self.head_dim)
+                .transpose(0, 1)
+            )
 
         
 
@@ -303,6 +336,13 @@ class MultiheadAttention(nn.Module):
         if v2 is not None:
             v2 = (
                 v2.contiguous()
+                .view(-1, bsz * self.num_heads, self.head_dim)
+                .transpose(0, 1)
+            )
+
+        if v3 is not None:
+            v3 = (
+                v3.contiguous()
                 .view(-1, bsz * self.num_heads, self.head_dim)
                 .transpose(0, 1)
             )
@@ -331,6 +371,16 @@ class MultiheadAttention(nn.Module):
                 else:
                     assert k2 is not None
                     k2 = torch.cat([prev_key2, k2], dim=1)
+            
+            if "prev_key3" in saved_state:
+                _prev_key3 = saved_state["prev_key3"]
+                assert _prev_key3 is not None
+                prev_key3 = _prev_key3.view(bsz * self.num_heads, -1, self.head_dim)
+                if static_kv:
+                    k3 = prev_key3
+                else:
+                    assert k3 is not None
+                    k3 = torch.cat([prev_key3, k3], dim=1)
 
             if "prev_value" in saved_state:
                 _prev_value = saved_state["prev_value"]
@@ -352,6 +402,17 @@ class MultiheadAttention(nn.Module):
                 else:
                     assert v2 is not None
                     v2 = torch.cat([prev_value2, v2], dim=1)
+            
+            if "prev_value3" in saved_state:
+                #print("in")
+                _prev_value3 = saved_state["prev_value3"]
+                assert _prev_value3 is not None
+                prev_value3 = _prev_value3.view(bsz * self.num_heads, -1, self.head_dim)
+                if static_kv:
+                    v3 = prev_value3
+                else:
+                    assert v3 is not None
+                    v3 = torch.cat([prev_value3, v3], dim=1)
 
 
             prev_key_padding_mask: Optional[Tensor] = None
@@ -361,6 +422,10 @@ class MultiheadAttention(nn.Module):
             prev_key_padding_mask2: Optional[Tensor] = None
             if "prev_key_padding_mask2" in saved_state:
                 prev_key_padding_mask2 = saved_state["prev_key_padding_mask2"]
+
+            prev_key_padding_mask3: Optional[Tensor] = None
+            if "prev_key_padding_mask3" in saved_state:
+                prev_key_padding_mask3 = saved_state["prev_key_padding_mask3"]
             
 
             assert k is not None and v is not None
@@ -381,6 +446,15 @@ class MultiheadAttention(nn.Module):
                     src_len=k2.size(1),
                     static_kv=static_kv,
                 )
+            
+            if key_padding_mask3 is not None:
+                key_padding_mask3 = MultiheadAttention._append_prev_key_padding_mask(
+                    key_padding_mask=key_padding_mask3,
+                    prev_key_padding_mask=prev_key_padding_mask3,
+                    batch_size=bsz,
+                    src_len=k3.size(1),
+                    static_kv=static_kv,
+                )
 
 
 
@@ -390,12 +464,15 @@ class MultiheadAttention(nn.Module):
 
             if k2 is not None:
                 saved_state["prev_key2"] = k2.view(bsz, self.num_heads, -1, self.head_dim)
+                saved_state["prev_key3"] = k3.view(bsz, self.num_heads, -1, self.head_dim)
 
             if v2 is not None:
                 saved_state["prev_value2"] = v2.view(bsz, self.num_heads, -1, self.head_dim)
+                saved_state["prev_value3"] = v3.view(bsz, self.num_heads, -1, self.head_dim)
             
             if key_padding_mask2 is not None:
                 saved_state["prev_key_padding_mask2"] = key_padding_mask2
+                saved_state["prev_key_padding_mask3"] = key_padding_mask3
 
             # In this branch incremental_state is never None
             assert incremental_state is not None
@@ -406,6 +483,7 @@ class MultiheadAttention(nn.Module):
 
         if k2 is not None:
             src_len2 = k2.size(1)
+            src_len3 = k3.size(1)
 
         # This is part of a workaround to get around fork/join parallelism
         # not supporting Optional types.
@@ -414,6 +492,9 @@ class MultiheadAttention(nn.Module):
 
         if key_padding_mask2 is not None and key_padding_mask2.dim() == 0:
             key_padding_mask2 = None
+            
+        if key_padding_mask3 is not None and key_padding_mask3.dim() == 0:
+            key_padding_mask3 = None
 
         #print(key_padding_mask.shape)
         #print(key_padding_mask2.shape)
@@ -425,6 +506,10 @@ class MultiheadAttention(nn.Module):
         if key_padding_mask2 is not None:
             assert key_padding_mask2.size(0) == bsz
             assert key_padding_mask2.size(1) == src_len2
+
+        if key_padding_mask3 is not None:
+            assert key_padding_mask3.size(0) == bsz
+            assert key_padding_mask3.size(1) == src_len3
 
         if self.add_zero_attn:
             #print("add zero attn")
@@ -455,6 +540,10 @@ class MultiheadAttention(nn.Module):
         if k2 is not None:
             attn_weights2 = torch.bmm(q, k2.transpose(1, 2))
             attn_weights2 = MultiheadAttention.apply_sparse_mask(attn_weights2, tgt_len, src_len2, bsz)
+        
+        if k3 is not None:
+            attn_weights3 = torch.bmm(q, k3.transpose(1, 2))
+            attn_weights3 = MultiheadAttention.apply_sparse_mask(attn_weights3, tgt_len, src_len3, bsz)
 
         
         assert list(attn_weights.size()) == [bsz * self.num_heads, tgt_len, src_len]
@@ -466,6 +555,8 @@ class MultiheadAttention(nn.Module):
             attn_weights += attn_mask
             if k2 is not None:
                 attn_weights2 += attn_mask
+            if k3 is not None:
+                attn_weights3 += attn_mask
 
 
 
@@ -487,6 +578,15 @@ class MultiheadAttention(nn.Module):
                 key_padding_mask2.unsqueeze(1).unsqueeze(2).to(torch.bool), float("-inf")
             )
             attn_weights2 = attn_weights2.view(bsz * self.num_heads, tgt_len, src_len2)
+        
+        if key_padding_mask3 is not None:
+            # don't attend to padding symbols
+            #print("padding attn_weights2")
+            attn_weights3 = attn_weights3.view(bsz, self.num_heads, tgt_len, src_len3)
+            attn_weights3 = attn_weights3.masked_fill(
+                key_padding_mask3.unsqueeze(1).unsqueeze(2).to(torch.bool), float("-inf")
+            )
+            attn_weights3 = attn_weights3.view(bsz * self.num_heads, tgt_len, src_len3)
 
         if before_softmax:
             
@@ -517,6 +617,20 @@ class MultiheadAttention(nn.Module):
             attn_weights_float2 = None
             attn_probs2  = None
 
+        if key_padding_mask3 is not None:
+            attn_weights_float3 = utils.softmax(
+            attn_weights3, dim=-1, onnx_trace=self.onnx_trace
+            )
+            attn_weights3 = attn_weights_float3.type_as(attn_weights3)
+            attn_probs3 = F.dropout(
+                attn_weights_float3.type_as(attn_weights3),
+                p=self.dropout,
+                training=self.training,
+            )
+        else:
+            attn_weights_float3 = None
+            attn_probs3  = None
+
         assert v is not None
 
 
@@ -535,6 +649,9 @@ class MultiheadAttention(nn.Module):
             #print('not None')
             attn2 = torch.bmm(attn_probs2, v2)
 
+        if v3 is not None:
+            #print('not None')
+            attn3 = torch.bmm(attn_probs3, v3)
         '''
         if balance_weight is not None:
 
@@ -575,17 +692,24 @@ class MultiheadAttention(nn.Module):
             attn = attn.contiguous().view(tgt_len, bsz, embed_dim)
             if v2 is not None:
                 attn2 = attn2.contiguous().view(tgt_len, bsz, embed_dim)
+            if v3 is not None:
+                attn3 = attn3.contiguous().view(tgt_len, bsz, embed_dim)
         else:
             #print('here')
             attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
             if v2 is not None:
                 attn2 = attn2.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
+            if v3 is not None:
+                attn3 = attn3.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
         
         
         attn = self.out_proj(attn)
 
         if v2 is not None:
             attn2 = self.out_proj(attn2)
+        
+        if v3 is not None:
+            attn3 = self.out_proj(attn3)
         
         #if v2 is not None:
         #    print('attn', attn)
@@ -596,12 +720,12 @@ class MultiheadAttention(nn.Module):
         #    attn = 0 * attn + 1 * attn2
         #print(attn)
         
-        if balance_weight is not None:
+        if balance_weight is not None: #balance weight is used only bart decoder
             #print(balance_weight.shape)
             
             balance_weight_temp = torch.cat(tgt_len * [balance_weight.unsqueeze(0)], dim = 0).unsqueeze(-1)
             #print(balance_weight_temp.shape)
-            temp_attn = torch.cat([attn.unsqueeze(2), attn2.unsqueeze(2)], dim = 2)
+            temp_attn = torch.cat([attn.unsqueeze(2), attn2.unsqueeze(2), attn3.unsqueeze(2)], dim = 2)
             attn = temp_attn.mul(balance_weight_temp)
             attn = torch.sum(attn, dim = 2)
 
@@ -613,6 +737,7 @@ class MultiheadAttention(nn.Module):
         
         attn_weights: Optional[Tensor] = None
         attn_weights2 = None
+        attn_weights3 = None
 
         if need_weights:
             attn_weights = attn_weights_float.view(
@@ -623,12 +748,19 @@ class MultiheadAttention(nn.Module):
                 attn_weights2 = attn_weights_float2.view(
                     bsz, self.num_heads, tgt_len, src_len2
                 ).transpose(1, 0)
+            
+            if attn_weights_float3 is not None:
+                attn_weights3 = attn_weights_float3.view(
+                    bsz, self.num_heads, tgt_len, src_len3
+                ).transpose(1, 0)
 
             if not need_head_weights:
                 # average attention weights over heads
                 attn_weights = attn_weights.mean(dim=0)
                 if attn_weights2 is not None:   
                     attn_weights2 = attn_weights2.mean(dim = 0)
+                if attn_weights3 is not None:   
+                    attn_weights3 = attn_weights3.mean(dim = 0)
         
 
 
@@ -636,9 +768,9 @@ class MultiheadAttention(nn.Module):
         #attn_weights2 = None
 
         if attn_weights2 is not None and need_weights:
-            return attn,  attn_weights,  attn_weights2
+            return attn,  attn_weights,  attn_weights2, attn_weights3
         else:
-            return attn, attn_weights, None
+            return attn, attn_weights, None , None
 
     @staticmethod
     def _append_prev_key_padding_mask(

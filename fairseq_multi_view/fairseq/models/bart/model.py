@@ -151,13 +151,17 @@ class BARTModel(TransformerModel):
             #segs = src_tokens[i].eq(24303) + src_tokens[i].eq(self.encoder.dictionary.eos())
             # 1721
             segs = src_tokens[i].eq(1721) + src_tokens[i].eq(15483)
+            ### segs is the lndex of | .. and it is True
             #src_tokens[i].eq(15483) + src_tokens[i].eq(1721) 
-            if segs.sum() > 0:
+            if segs.sum() > 0: # if there is at least one |
                 #print(segs)
                 sections.append(encoder_out[i][segs])
+                
+                # the result of encoded value of | is appended in sections
             else:
                 print(src_tokens[i])
                 print('no segmentstions')
+                
         
         
         
@@ -168,31 +172,33 @@ class BARTModel(TransformerModel):
         section_padding_mask = sections.eq(0).sum(-1) > 0
         section_padding = 1 - section_padding_mask.type(torch.long)
         
-        #print(sections.shape)
+        
         #print(sections[-1])
-
+        #print(sections, section_padding_mask.transpose(1, 0), section_padding.transpose(1, 0))
+        
         return sections, section_padding_mask.transpose(1, 0), section_padding.transpose(1, 0)
 
     
     def forward(
-        self, src_tokens, src_lengths, prev_output_tokens, src2_tokens = None, src2_lengths = None,
+        self, src_tokens, src_lengths, prev_output_tokens, src2_tokens = None,src3_tokens = None, src2_lengths = None,src3_lengths = None,
         features_only=False, balance = False, classification_head_name=None, **kwargs
     ):
         if classification_head_name is not None:
             features_only = True
-
+        
 
         #print("????", src_tokens.shape)
 
         #print("????", src_tokens)
         #print("!!!", src_lengths[0])
         #print("----", src2_tokens[0], src2_tokens[0].shape, src2_lengths[0])
-
+        
         encoder_out = self.encoder(
             src_tokens,
             src_lengths=src_lengths,
-            **kwargs,
+            **kwargs
         )
+        
 
         sections, section_padding_mask, section_padding = self.section_extract(src_tokens, encoder_out.encoder_out)
         # T * B * C
@@ -230,10 +236,31 @@ class BARTModel(TransformerModel):
             section_out2 = None
             section_padding_mask2 = None
         
+        if src3_tokens is not None:
+            encoder_out3 = self.encoder(
+                src3_tokens,
+                src_lengths=src3_lengths,
+                **kwargs,
+            )
+            
+            
+            sections3, section_padding_mask3, section_padding3 = self.section_extract(src3_tokens, encoder_out3.encoder_out)
+            
+            #sections2 = self.forward_section_embeddings(sections2, section_padding2)
+            #section_out2 = sections2
+            #section_out2 = self.section(sections2, src_key_padding_mask = section_padding_mask2)
+            section_out3, _ = self.section(sections3)
+
+        else:
+            encoder_out3 = None
+            sections3 = None
+            section_out3 = None
+            section_padding_mask3 = None
+
         #print(".....", encoder_out.encoder_out.shape)
         
         #print(".....", encoder_out.encoder_out.shape)
-
+        
         if balance:
 
             #eos_mask1 = src_tokens.eq(2)
@@ -262,6 +289,7 @@ class BARTModel(TransformerModel):
             #src2 = torch.nn.functional.max_pool1d(section_out2.transpose(1, 0).transpose(2,1), kernel_size = section_out2.shape[1]).unsqueeze(-1)
             src = section_out[-1, :].unsqueeze(1)
             src2 = section_out2[-1, :].unsqueeze(1)
+            src3 = section_out3[-1, :].unsqueeze(1)
 
             #print(src)
             #print(src2)
@@ -279,18 +307,18 @@ class BARTModel(TransformerModel):
             #print(src.shape)
             #print(src2.shape)
             
-            src_input = torch.cat([src, src2], dim = 1)
+            src_input = torch.cat([src, src2, src3], dim = 1)
 
             #print(src_input.shape)
 
             Hw = torch.tanh(self.w_proj_layer_norm(self.w_proj(src_input)))
 
-            #print(Hw)
+            
             #Hw = torch.tanh(self.w_proj(src_input))
 
             #balance_weight = self.softmax(Hw.matmul(self.w_context_vector).squeeze(-1))
             balance_weight = self.softmax(self.w_context_vector(Hw).squeeze(-1))
-
+            
             #print(balance_weight)
             #print(self.args.T)
             #pt = p**(1/args.T)
@@ -298,8 +326,8 @@ class BARTModel(TransformerModel):
             #self.T = self.args.T
 
             original_balance_weight = balance_weight
-
-
+            
+            
 
             balance_weight = balance_weight **(1/self.T)
             balance_weight = balance_weight/balance_weight.sum(dim = 1, keepdim = True)
@@ -321,15 +349,18 @@ class BARTModel(TransformerModel):
 
         #print('prev_output_token', prev_output_tokens)
         #print('encoder_out.encoder_out', encoder_out.encoder_out)
-
+        
+        
         x, extra = self.decoder(
-            prev_output_tokens,
+            prev_output_tokens, #label???
             encoder_out= encoder_out,
             encoder_out2 = encoder_out2,
+            encoder_out3 = encoder_out3,
             features_only=features_only,
             balance_weight = balance_weight,
-            **kwargs,
+            **kwargs
         )
+        
 
         #print(".........")
         #print(x.shape)
@@ -353,7 +384,7 @@ class BARTModel(TransformerModel):
 
         #print("?????", x.shape)
         extra['original_balance_weight'] = original_balance_weight
-
+        
         
 
         if classification_head_name is not None:

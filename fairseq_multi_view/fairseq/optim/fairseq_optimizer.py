@@ -64,6 +64,12 @@ class FairseqOptimizer(object):
                     param_group['lr'] = lr * self.args.lr_weight #3e-4 #lr * 1000 #3e-4 #lr * 100 #3e-4#lr * 100 #1e-3
                 else:
                     param_group['lr'] = self.args.lr_weight
+            
+            # elif i == 2:
+            #     if self.args.lr_weight >= 1:
+            #         param_group['lr'] = lr * self.args.lr_weight #3e-4 #lr * 1000 #3e-4 #lr * 100 #3e-4#lr * 100 #1e-3
+            #     else:
+            #         param_group['lr'] = self.args.lr_weight
 
             i = i+1
 
