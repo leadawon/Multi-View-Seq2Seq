@@ -189,9 +189,12 @@ class Trainer(object):
 
         params = [
             {"params": base_params},
-            {"params": new_params},
+            {"params": new_params}
+            ,
             {"params": third_params},
         ]
+
+        
         # "weight_decay": 0.01
         
         

@@ -55,20 +55,20 @@ def load_langpair_dataset(
 
     for k in itertools.count():
         split_k = split + (str(k) if k > 0 else '')
-
+        
         # infer langcode
         if split_exists(split_k, src, tgt, src, data_path):
             prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, src, tgt))
             if multi_views:
                 prefix2 = os.path.join(data_path[:-2], '{}.{}-{}.'.format(split_k, src, tgt))
-                prefix3 = os.path.join(data_path[:-2], '{}.{}-{}.'.format(split_k, src, tgt))
-
+                prefix3 = os.path.join(data_path[:-2]+"_3", '{}.{}-{}.'.format(split_k, src, tgt))
+                
         elif split_exists(split_k, tgt, src, src, data_path):
             prefix = os.path.join(data_path, '{}.{}-{}.'.format(split_k, tgt, src))
             if multi_views:
                 prefix2 = os.path.join(data_path[:-2], '{}.{}-{}.'.format(split_k, tgt, src))
-                prefix3 = os.path.join(data_path[:-1]+"3", '{}.{}-{}.'.format(split_k, src, tgt))
-
+                prefix3 = os.path.join(data_path[:-2]+"_3", '{}.{}-{}.'.format(split_k, tgt, src))
+                
         else:
             if k > 0:
                 break
@@ -79,9 +79,10 @@ def load_langpair_dataset(
         
         if multi_views:
             src_dataset2 = data_utils.load_indexed_dataset(prefix2 + src, src_dict, dataset_impl)
+            
             src_dataset3 = data_utils.load_indexed_dataset(prefix3 + src, src_dict, dataset_impl)
-
-
+            
+        
         if truncate_source:
             src_dataset = AppendTokenDataset(
                 TruncateDataset(
@@ -112,7 +113,7 @@ def load_langpair_dataset(
         if multi_views:
             src2_datasets.append(src_dataset2)
             src3_datasets.append(src_dataset3)
-
+        
         tgt_datasets.append(
             data_utils.load_indexed_dataset(prefix + tgt, tgt_dict, dataset_impl)
         )
@@ -120,7 +121,7 @@ def load_langpair_dataset(
         logger.info('{} {} {}-{} {} examples'.format(
             data_path, split_k, src, tgt, len(src_datasets[-1])
         ))
-
+        
         if not combine:
             break
 
@@ -169,7 +170,7 @@ def load_langpair_dataset(
         align_path = os.path.join(data_path, '{}.align.{}-{}'.format(split, src, tgt))
         if indexed_dataset.dataset_exists(align_path, impl=dataset_impl):
             align_dataset = data_utils.load_indexed_dataset(align_path, None, dataset_impl)
-
+    
     if multi_views:
         return LanguagePairDataset(
             src_dataset, src_dataset.sizes, src_dict,
@@ -194,7 +195,7 @@ def load_langpair_dataset(
             align_dataset=align_dataset,
         )
 
-
+    
 
 @register_task('translation')
 class TranslationTask(FairseqTask):

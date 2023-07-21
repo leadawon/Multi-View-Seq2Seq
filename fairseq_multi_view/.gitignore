@@ -130,3 +130,7 @@ data-bin/
 
 # Experimental Folder
 experimental/*
+
+#custom
+data/
+train_sh/checkpoints/

@@ -118,6 +118,7 @@ class Adam(torch.optim.Optimizer):
                  weight_decay=0, amsgrad=False):
         defaults = dict(lr=lr, betas=betas, eps=eps,
                         weight_decay=weight_decay, amsgrad=amsgrad)
+        print(len(params),len(defaults))
         super(Adam, self).__init__(params, defaults)
 
     @property
