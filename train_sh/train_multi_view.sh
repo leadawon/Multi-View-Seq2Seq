@@ -34,7 +34,7 @@ CUDA_VISIBLE_DEVICES=0 python train.py cnn_dm-bin_2 \
     --multi-views \
     --balance \
     --seed 14632\
-    --max-epoch 20 #custom
+    --max-epoch 5 #custom
 
 
 
