@@ -1,3 +1,4 @@
 train_sh/checkpoints/
 cnn_dm-bin/
 cnn_dm-bin_2/
+data/

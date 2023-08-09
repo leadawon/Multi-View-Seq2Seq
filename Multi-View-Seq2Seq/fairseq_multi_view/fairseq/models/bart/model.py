@@ -182,17 +182,21 @@ class BARTModel(TransformerModel):
             features_only = True
 
 
-        #print("????", src_tokens.shape)
+        # print("??????????????\n\n\n\n\n", src_tokens.shape)
 
-        #print("????", src_tokens)
-        #print("!!!", src_lengths[0])
-        #print("----", src2_tokens[0], src2_tokens[0].shape, src2_lengths[0])
-
+        # print("??????????????????????\n\n\n\n\n\n\n", src_tokens)
+        # print("!!!!!!!!\n\n\n\n\n\n", src_lengths)
+        # print("----\n\n\n\n\n\n\n", src2_tokens[0], src2_tokens[0].shape, src2_lengths[0])
+        # print("##\n\n\n\n\n",src2_tokens)
+        
         encoder_out = self.encoder(
             src_tokens,
             src_lengths=src_lengths,
             **kwargs,
         )
+
+        # print("@@@@@\n\n\n\n",encoder_out,"@@@@\n\n\n" ,len(encoder_out),len(encoder_out[0]),len(encoder_out[0][0]),len(encoder_out[0][0][0]),encoder_out[0][0][0][0])
+        
 
         sections, section_padding_mask, section_padding = self.section_extract(src_tokens, encoder_out.encoder_out)
         # T * B * C
@@ -488,6 +492,7 @@ class BARTClassificationHead(nn.Module):
         x = self.activation_fn(x)
         x = self.dropout(x)
         x = self.out_proj(x)
+        assert False
         return x
 
 
